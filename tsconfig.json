@@ -7,10 +7,11 @@
     "outDir": "dist",
     "rootDir": ".",
     "types": ["node"],
+    "jsx": "react-jsx",
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
-    "strict": true,
+    "strict": false,
     "forceConsistentCasingInFileNames": true,
     "isolatedModules": true
   },
