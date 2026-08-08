@@ -8,6 +8,14 @@ import { enqueueCertificateGeneration } from "../queues/certificateQueue";
 const HEARTBEAT_INTERVAL_SECONDS = 5;
 const HEARTBEAT_TOLERANCE_SECONDS = 3;
 
+interface ProgressRow {
+  lessonId: string;
+  completed: boolean;
+  watchPct: number;
+  lastPositionSeconds: number;
+  updatedAt: Date;
+}
+
 export async function getActiveEnrollment(userId: string, courseId: string) {
   return prisma.enrollment.findFirst({
     where: {
@@ -39,7 +47,9 @@ export async function getCourseProgress(userId: string, courseId: string) {
     prisma.lesson.findMany({ where: { courseId }, orderBy: { order: "asc" } }),
     prisma.lessonProgress.findMany({ where: { enrollmentId: enrollment.id } }),
   ]);
-  const progressByLessonId = new Map(progressRows.map((p) => [p.lessonId, p]));
+  const progressByLessonId = new Map<string, ProgressRow>(
+    progressRows.map((p) => [p.lessonId, p as ProgressRow])
+  );
 
   let previousCompleted = true;
   const lessonEntries: LessonProgressEntry[] = lessons.map((lesson) => {
