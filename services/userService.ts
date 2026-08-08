@@ -113,7 +113,7 @@ export interface UpdateUserInput {
   role?: UserRole;
   memberType?: MemberType;
   status?: UserStatus;
-  managerId?: string | null;
+  managerId?: string;
   bio?: string;
   location?: string;
   openToWork?: boolean;
