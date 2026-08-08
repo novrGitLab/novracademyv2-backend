@@ -45,6 +45,20 @@ async function main() {
   });
   console.log(`  org admin   ${orgAdmin.email} / org1234  (${orgAdmin.role})`);
 
+  const institutionAdmin = await prisma.user.upsert({
+    where: { email: "institution@novracademy.com" },
+    update: {},
+    create: {
+      email: "institution@novracademy.com",
+      name: "Institution Admin",
+      passwordHash: await hash("institution1234"),
+      role: UserRole.INSTITUTION_ADMIN,
+      memberType: MemberType.NEW_LEARNER,
+      status: UserStatus.ACTIVE,
+    },
+  });
+  console.log(`  institution ${institutionAdmin.email} / institution1234  (${institutionAdmin.role})`);
+
   const manager = await prisma.user.upsert({
     where: { email: "manager@novracademy.com" },
     update: {},
@@ -320,6 +334,7 @@ async function main() {
   console.log("  ─────────────────────────────────────────────────────────");
   console.log("  admin@novracademy.com       / admin1234      (Super Admin)");
   console.log("  org@novracademy.com         / org1234        (Org Admin)");
+  console.log("  institution@novracademy.com / institution1234 (Institution Admin)");
   console.log("  manager@novracademy.com     / manager1234    (Manager)");
   console.log("  ada@novracademy.com         / student1234    (Learner)");
   console.log("  grace@novracademy.com       / student1234    (Learner)");

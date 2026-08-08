@@ -6,6 +6,7 @@
 export const UserRole = {
   SUPER_ADMIN: "SUPER_ADMIN",
   ORG_ADMIN: "ORG_ADMIN",
+  INSTITUTION_ADMIN: "INSTITUTION_ADMIN",
   MANAGER: "MANAGER",
   LEARNER: "LEARNER",
   LEGACY_ALUMNI: "LEGACY_ALUMNI",
@@ -176,7 +177,7 @@ export const NotificationType = {
 export type NotificationType = (typeof NotificationType)[keyof typeof NotificationType];
 
 /** Roles allowed to access the admin dashboard. */
-export const ADMIN_ROLES: UserRole[] = [UserRole.SUPER_ADMIN, UserRole.ORG_ADMIN];
+export const ADMIN_ROLES: UserRole[] = [UserRole.SUPER_ADMIN, UserRole.ORG_ADMIN, UserRole.INSTITUTION_ADMIN];
 
 /** Roles allowed to manage a team's enrollments/reports. */
 export const MANAGER_ROLES: UserRole[] = [UserRole.SUPER_ADMIN, UserRole.ORG_ADMIN, UserRole.MANAGER];
