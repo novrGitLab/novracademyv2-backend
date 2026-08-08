@@ -225,29 +225,35 @@ async function main() {
   // ── Enrollments ────────────────────────────────────────────────────────
 
   for (const student of students.slice(0, 3)) {
-    await prisma.enrollment.upsert({
-      where: { userId_courseId: { userId: student.id, courseId: webDevCourse.id } },
-      update: {},
-      create: {
-        userId: student.id,
-        courseId: webDevCourse.id,
-        cohortId: cohort2026.id,
-        assignedById: admin.id,
-      },
+    const existing = await prisma.enrollment.findFirst({
+      where: { userId: student.id, courseId: webDevCourse.id },
     });
+    if (!existing) {
+      await prisma.enrollment.create({
+        data: {
+          userId: student.id,
+          courseId: webDevCourse.id,
+          cohortId: cohort2026.id,
+          assignedById: admin.id,
+        },
+      });
+    }
   }
 
   for (const student of students.slice(2, 5)) {
-    await prisma.enrollment.upsert({
-      where: { userId_courseId: { userId: student.id, courseId: dataScienceCourse.id } },
-      update: {},
-      create: {
-        userId: student.id,
-        courseId: dataScienceCourse.id,
-        cohortId: cohort2026.id,
-        assignedById: admin.id,
-      },
+    const existing = await prisma.enrollment.findFirst({
+      where: { userId: student.id, courseId: dataScienceCourse.id },
     });
+    if (!existing) {
+      await prisma.enrollment.create({
+        data: {
+          userId: student.id,
+          courseId: dataScienceCourse.id,
+          cohortId: cohort2026.id,
+          assignedById: admin.id,
+        },
+      });
+    }
   }
   console.log(`  enrollments created for students`);
 
