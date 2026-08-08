@@ -7,7 +7,10 @@
     "dev": "tsx watch index.ts",
     "build": "npx prisma generate --schema=packages/db/prisma/schema.prisma && tsc -p tsconfig.json",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "db:seed": "npx tsx packages/db/prisma/seed.ts",
+    "db:migrate": "npx prisma migrate dev --schema=packages/db/prisma/schema.prisma",
+    "db:push": "npx prisma db push --schema=packages/db/prisma/schema.prisma"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
