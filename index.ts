@@ -13,6 +13,7 @@ import { ApiError } from "./lib/errors";
 import "./queues/certificateWorker";
 import "./queues/emailWorker";
 import alumniRouter from "./routes/alumni";
+import authRouter from "./routes/auth";
 import analyticsRouter from "./routes/analytics";
 import badgesRouter from "./routes/badges";
 import bulkRouter from "./routes/bulk";
@@ -63,6 +64,7 @@ app.use("/webhooks", webhooksRouter);
 
 app.use(express.json());
 
+app.use("/auth", authRouter);
 app.use("/users", usersRouter);
 app.use("/courses", coursesRouter);
 app.use("/cohorts", cohortsRouter);
