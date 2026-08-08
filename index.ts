@@ -7,7 +7,7 @@ import { createServer } from "http";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
-import { Prisma } from "@novr/db";
+import { Prisma, PrismaClientKnownRequestError } from "@novr/db";
 import { ApiError } from "./lib/errors";
 // Side-effect imports: starts the background workers in this same process.
 import "./queues/certificateWorker";
@@ -74,7 +74,7 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
   if (err instanceof ApiError) {
     return res.status(err.status).json({ error: err.message });
   }
-  if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025") {
+  if (err instanceof PrismaClientKnownRequestError && err.code === "P2025") {
     return res.status(404).json({ error: "Not found" });
   }
   console.error(err);
