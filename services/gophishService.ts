@@ -1,4 +1,4 @@
-import axios, { AxiosInstance } from "axios";
+import axios, { AxiosInstance, AxiosResponse } from "axios";
 import https from "https";
 
 const GOPHISH_URL = process.env.GOPHISH_URL ?? "https://172.236.25.61:3004/api";
@@ -7,6 +7,9 @@ const GOPHISH_API_KEY = process.env.GOPHISH_API_KEY;
 if (!GOPHISH_API_KEY) {
   console.warn("WARNING: GOPHISH_API_KEY not set — GoPhish features will fail");
 }
+
+console.log(`GoPhish URL: ${GOPHISH_URL}`);
+console.log(`GoPhish API Key set: ${!!GOPHISH_API_KEY}`);
 
 const client: AxiosInstance = axios.create({
   baseURL: GOPHISH_URL,
@@ -19,10 +22,16 @@ const client: AxiosInstance = axios.create({
   timeout: 30_000,
 });
 
+// Helper to log and return GoPhish responses
+function handleResponse(label: string, res: AxiosResponse) {
+  console.log(`GoPhish ${label} response:`, JSON.stringify(res.data).substring(0, 500));
+  return res;
+}
+
 // ─── Resources ───────────────────────────────────────────────────────────
 
 export async function createSendingProfile(name: string) {
-  return client.post("/smtp", {
+  const res = await client.post("/smtp", {
     name,
     interface_type: "SMTP",
     from_address: "security@novracademy.com",
@@ -32,20 +41,23 @@ export async function createSendingProfile(name: string) {
     password: "",
     ignore_cert_errors: true,
   });
+  return handleResponse("SMTP", res);
 }
 
 export async function createLandingPage(name: string, html: string) {
-  return client.post("/pages", {
+  const res = await client.post("/pages", {
     name,
     html,
     capture_credentials: true,
     capture_passwords: false,
     redirect_url: process.env.GOPHISH_REDIRECT_URL ?? "http://172.236.25.61:3006",
   });
+  return handleResponse("Page", res);
 }
 
 export async function createTemplate(name: string, subject: string, html: string, text = "") {
-  return client.post("/templates", { name, subject, html, text });
+  const res = await client.post("/templates", { name, subject, html, text });
+  return handleResponse("Template", res);
 }
 
 export interface Target {
@@ -56,7 +68,7 @@ export interface Target {
 }
 
 export async function createGroup(name: string, targets: Target[]) {
-  return client.post("/groups", {
+  const res = await client.post("/groups", {
     name,
     targets: targets.map((t) => ({
       first_name: t.firstName || t.email.split("@")[0],
@@ -65,11 +77,11 @@ export async function createGroup(name: string, targets: Target[]) {
       position: t.position || "",
     })),
   });
+  return handleResponse("Group", res);
 }
 
 // ─── Campaigns ───────────────────────────────────────────────────────────
 
-// Official GoPhish API uses NAMES, not IDs for campaign creation
 export interface LaunchCampaignParams {
   name: string;
   templateName: string;
@@ -80,7 +92,7 @@ export interface LaunchCampaignParams {
 }
 
 export async function launchCampaign(params: LaunchCampaignParams) {
-  return client.post("/campaigns", {
+  const res = await client.post("/campaigns", {
     name: params.name,
     template: { name: params.templateName },
     page: { name: params.pageName },
@@ -88,14 +100,17 @@ export async function launchCampaign(params: LaunchCampaignParams) {
     groups: [{ name: params.groupName }],
     url: params.url,
   });
+  return handleResponse("Campaign", res);
 }
 
 export async function getCampaignSummary(campaignId: number) {
-  return client.get(`/campaigns/${campaignId}/summary`);
+  const res = await client.get(`/campaigns/${campaignId}/summary`);
+  return handleResponse("Summary", res);
 }
 
 export async function getCampaignResults(campaignId: number) {
-  return client.get(`/campaigns/${campaignId}/results`);
+  const res = await client.get(`/campaigns/${campaignId}/results`);
+  return handleResponse("Results", res);
 }
 
 export async function deleteCampaign(campaignId: number) {
@@ -120,9 +135,11 @@ export async function listGroups() {
 
 export async function isHealthy(): Promise<boolean> {
   try {
-    await client.get("/config", { timeout: 5000 });
+    const res = await client.get("/config", { timeout: 5000 });
+    console.log("GoPhish health check:", JSON.stringify(res.data).substring(0, 200));
     return true;
-  } catch {
+  } catch (err: any) {
+    console.error("GoPhish health check failed:", err.message);
     return false;
   }
 }
