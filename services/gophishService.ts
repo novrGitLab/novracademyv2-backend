@@ -22,12 +22,12 @@ const client: AxiosInstance = axios.create({
 // ─── Resources ───────────────────────────────────────────────────────────
 
 export async function createSendingProfile(name: string) {
-  return client.post("/smtp/", {
+  return client.post("/smtp", {
     name,
     interface_type: "SMTP",
     from_address: "security@novracademy.com",
-    host: "mailhog",
-    port: 1025,
+    host: process.env.GOPHISH_SMTP_HOST ?? "mailhog",
+    port: parseInt(process.env.GOPHISH_SMTP_PORT ?? "1025"),
     username: "",
     password: "",
     ignore_cert_errors: true,
@@ -35,7 +35,7 @@ export async function createSendingProfile(name: string) {
 }
 
 export async function createLandingPage(name: string, html: string) {
-  return client.post("/pages/", {
+  return client.post("/pages", {
     name,
     html,
     capture_credentials: true,
@@ -45,7 +45,7 @@ export async function createLandingPage(name: string, html: string) {
 }
 
 export async function createTemplate(name: string, subject: string, html: string, text = "") {
-  return client.post("/templates/", { name, subject, html, text });
+  return client.post("/templates", { name, subject, html, text });
 }
 
 export interface Target {
@@ -56,7 +56,7 @@ export interface Target {
 }
 
 export async function createGroup(name: string, targets: Target[]) {
-  return client.post("/groups/", {
+  return client.post("/groups", {
     name,
     targets: targets.map((t) => ({
       first_name: t.firstName || t.email.split("@")[0],
@@ -69,22 +69,23 @@ export async function createGroup(name: string, targets: Target[]) {
 
 // ─── Campaigns ───────────────────────────────────────────────────────────
 
+// Official GoPhish API uses NAMES, not IDs for campaign creation
 export interface LaunchCampaignParams {
   name: string;
-  templateId: number;
-  pageId: number;
-  smtpId: number;
-  groupId: number;
+  templateName: string;
+  pageName: string;
+  smtpName: string;
+  groupName: string;
   url: string;
 }
 
 export async function launchCampaign(params: LaunchCampaignParams) {
-  return client.post("/campaigns/", {
+  return client.post("/campaigns", {
     name: params.name,
-    template: { id: params.templateId },
-    page: { id: params.pageId },
-    smtp: { id: params.smtpId },
-    groups: [{ id: params.groupId }],
+    template: { name: params.templateName },
+    page: { name: params.pageName },
+    smtp: { name: params.smtpName },
+    groups: [{ name: params.groupName }],
     url: params.url,
   });
 }
@@ -98,14 +99,28 @@ export async function getCampaignResults(campaignId: number) {
 }
 
 export async function deleteCampaign(campaignId: number) {
-  return client.delete(`/campaigns/${campaignId}/`);
+  return client.delete(`/campaigns/${campaignId}`);
+}
+
+// ─── List existing resources ─────────────────────────────────────────────
+
+export async function listSendingProfiles() {
+  return client.get("/smtp");
+}
+
+export async function listTemplates() {
+  return client.get("/templates");
+}
+
+export async function listGroups() {
+  return client.get("/groups");
 }
 
 // ─── Health check ────────────────────────────────────────────────────────
 
 export async function isHealthy(): Promise<boolean> {
   try {
-    await client.get("/config/", { timeout: 5000 });
+    await client.get("/config", { timeout: 5000 });
     return true;
   } catch {
     return false;
