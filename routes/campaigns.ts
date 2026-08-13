@@ -45,37 +45,42 @@ router.post("/", async (req, res) => {
   try {
     // 1. Create GoPhish resources sequentially (with logging)
     console.log("GoPhish: Creating sending profile...");
-    const smtp = await gophish.createSendingProfile(smtpName);
-    console.log("GoPhish: SMTP created:", smtp.data?.id);
+    const smtpRes = await gophish.createSendingProfile(smtpName);
+    const smtpData = smtpRes.data?.data || smtpRes.data;
+    console.log("GoPhish: SMTP created:", smtpData?.id);
 
     console.log("GoPhish: Creating landing page...");
-    const page = await gophish.createLandingPage(pageName, landingPageHtml);
-    console.log("GoPhish: Page created:", page.data?.id);
+    const pageRes = await gophish.createLandingPage(pageName, landingPageHtml);
+    const pageData = pageRes.data?.data || pageRes.data;
+    console.log("GoPhish: Page created:", pageData?.id);
 
     console.log("GoPhish: Creating template...");
-    const template = await gophish.createTemplate(templateName, "Action Required: Verify Your Account", templateHtml);
-    console.log("GoPhish: Template created:", template.data?.id);
+    const templateRes = await gophish.createTemplate(templateName, "Action Required: Verify Your Account", templateHtml);
+    const templateData = templateRes.data?.data || templateRes.data;
+    console.log("GoPhish: Template created:", templateData?.id);
 
     console.log("GoPhish: Creating group...");
-    const group = await gophish.createGroup(groupName, employeeEmails);
-    console.log("GoPhish: Group created:", group.data?.id);
+    const groupRes = await gophish.createGroup(groupName, employeeEmails);
+    const groupData = groupRes.data?.data || groupRes.data;
+    console.log("GoPhish: Group created:", groupData?.id);
 
     // 2. Launch campaign using NAMES (official GoPhish API)
     console.log("GoPhish: Launching campaign...");
-    const campaign = await gophish.launchCampaign({
+    const campaignRes = await gophish.launchCampaign({
       name,
-      templateName: template.data.name,
-      pageName: page.data.name,
-      smtpName: smtp.data.name,
-      groupName: group.data.name,
+      templateName: templateData.name,
+      pageName: pageData.name,
+      smtpName: smtpData.name,
+      groupName: groupData.name,
       url: campaignUrl,
     });
-    console.log("GoPhish: Campaign launched:", campaign.data?.id);
+    const campaignData = campaignRes.data?.data || campaignRes.data;
+    console.log("GoPhish: Campaign launched:", campaignData?.id);
 
     // 3. Save to database
     const dbCampaign = await prisma.campaign.create({
       data: {
-        gophishCampaignId: campaign.data.id,
+        gophishCampaignId: campaignData.id,
         name,
         status: "active",
         launchedAt: new Date(),
@@ -84,7 +89,7 @@ router.post("/", async (req, res) => {
 
     res.status(201).json({
       success: true,
-      campaignId: campaign.data.id,
+      campaignId: campaignData.id,
       dbCampaignId: dbCampaign.id,
     });
   } catch (err: any) {
