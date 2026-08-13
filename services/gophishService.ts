@@ -31,7 +31,7 @@ function handleResponse(label: string, res: AxiosResponse) {
 // ─── Resources ───────────────────────────────────────────────────────────
 
 export async function createSendingProfile(name: string) {
-  const res = await client.post("/smtp", {
+  const res = await client.post("/smtp/", {
     name,
     interface_type: "SMTP",
     from_address: "security@novracademy.com",
@@ -45,7 +45,7 @@ export async function createSendingProfile(name: string) {
 }
 
 export async function createLandingPage(name: string, html: string) {
-  const res = await client.post("/pages", {
+  const res = await client.post("/pages/", {
     name,
     html,
     capture_credentials: true,
@@ -56,7 +56,7 @@ export async function createLandingPage(name: string, html: string) {
 }
 
 export async function createTemplate(name: string, subject: string, html: string, text = "") {
-  const res = await client.post("/templates", { name, subject, html, text });
+  const res = await client.post("/templates/", { name, subject, html, text });
   return handleResponse("Template", res);
 }
 
@@ -68,7 +68,7 @@ export interface Target {
 }
 
 export async function createGroup(name: string, targets: Target[]) {
-  const res = await client.post("/groups", {
+  const res = await client.post("/groups/", {
     name,
     targets: targets.map((t) => ({
       first_name: t.firstName || t.email.split("@")[0],
@@ -92,7 +92,7 @@ export interface LaunchCampaignParams {
 }
 
 export async function launchCampaign(params: LaunchCampaignParams) {
-  const res = await client.post("/campaigns", {
+  const res = await client.post("/campaigns/", {
     name: params.name,
     template: { name: params.templateName },
     page: { name: params.pageName },
@@ -120,15 +120,15 @@ export async function deleteCampaign(campaignId: number) {
 // ─── List existing resources ─────────────────────────────────────────────
 
 export async function listSendingProfiles() {
-  return client.get("/smtp");
+  return client.get("/smtp/");
 }
 
 export async function listTemplates() {
-  return client.get("/templates");
+  return client.get("/templates/");
 }
 
 export async function listGroups() {
-  return client.get("/groups");
+  return client.get("/groups/");
 }
 
 // ─── Health check ────────────────────────────────────────────────────────
