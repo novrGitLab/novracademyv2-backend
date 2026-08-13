@@ -150,10 +150,4 @@ router.delete("/:id", async (req, res) => {
   res.status(204).send();
 });
 
-// GET /campaigns/health/check — check GoPhish connectivity
-router.get("/health/check", async (_req, res) => {
-  const healthy = await gophish.isHealthy();
-  res.json({ gophish: healthy ? "connected" : "unreachable" });
-});
-
 export default router;
