@@ -15,6 +15,7 @@ import "./queues/emailWorker";
 import alumniRouter from "./routes/alumni";
 import authRouter from "./routes/auth";
 import analyticsRouter from "./routes/analytics";
+import campaignsRouter from "./routes/campaigns";
 import badgesRouter from "./routes/badges";
 import bulkRouter from "./routes/bulk";
 import certificatesRouter from "./routes/certificates";
@@ -81,6 +82,7 @@ app.use("/reports", reportsRouter);
 app.use("/bulk", bulkRouter);
 app.use("/badges", badgesRouter);
 app.use("/notifications", notificationsRouter);
+app.use("/campaigns", campaignsRouter);
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (err instanceof ApiError) {
