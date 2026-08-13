@@ -43,15 +43,25 @@ router.post("/", async (req, res) => {
   const groupName = `${name}-targets-${timestamp}`;
 
   try {
-    // 1. Create GoPhish resources in parallel
-    const [smtp, page, template, group] = await Promise.all([
-      gophish.createSendingProfile(smtpName),
-      gophish.createLandingPage(pageName, landingPageHtml),
-      gophish.createTemplate(templateName, "Action Required: Verify Your Account", templateHtml),
-      gophish.createGroup(groupName, employeeEmails),
-    ]);
+    // 1. Create GoPhish resources sequentially (with logging)
+    console.log("GoPhish: Creating sending profile...");
+    const smtp = await gophish.createSendingProfile(smtpName);
+    console.log("GoPhish: SMTP created:", smtp.data?.id);
+
+    console.log("GoPhish: Creating landing page...");
+    const page = await gophish.createLandingPage(pageName, landingPageHtml);
+    console.log("GoPhish: Page created:", page.data?.id);
+
+    console.log("GoPhish: Creating template...");
+    const template = await gophish.createTemplate(templateName, "Action Required: Verify Your Account", templateHtml);
+    console.log("GoPhish: Template created:", template.data?.id);
+
+    console.log("GoPhish: Creating group...");
+    const group = await gophish.createGroup(groupName, employeeEmails);
+    console.log("GoPhish: Group created:", group.data?.id);
 
     // 2. Launch campaign using NAMES (official GoPhish API)
+    console.log("GoPhish: Launching campaign...");
     const campaign = await gophish.launchCampaign({
       name,
       templateName: template.data.name,
@@ -60,6 +70,7 @@ router.post("/", async (req, res) => {
       groupName: group.data.name,
       url: campaignUrl,
     });
+    console.log("GoPhish: Campaign launched:", campaign.data?.id);
 
     // 3. Save to database
     const dbCampaign = await prisma.campaign.create({
@@ -77,7 +88,8 @@ router.post("/", async (req, res) => {
       dbCampaignId: dbCampaign.id,
     });
   } catch (err: any) {
-    console.error("Campaign launch failed:", err.response?.data || err.message);
+    console.error("Campaign launch failed:", JSON.stringify(err.response?.data || err.message));
+    console.error("Full error:", err.stack || err);
     res.status(500).json({
       error: "Campaign launch failed",
       details: err.response?.data || err.message,
