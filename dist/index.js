@@ -18,7 +18,9 @@ const errors_1 = require("./lib/errors");
 require("./queues/certificateWorker");
 require("./queues/emailWorker");
 const alumni_1 = __importDefault(require("./routes/alumni"));
+const auth_1 = __importDefault(require("./routes/auth"));
 const analytics_1 = __importDefault(require("./routes/analytics"));
+const campaigns_1 = __importDefault(require("./routes/campaigns"));
 const badges_1 = __importDefault(require("./routes/badges"));
 const bulk_1 = __importDefault(require("./routes/bulk"));
 const certificates_1 = __importDefault(require("./routes/certificates"));
@@ -36,8 +38,18 @@ const users_1 = __importDefault(require("./routes/users"));
 const webhooks_1 = __importDefault(require("./routes/webhooks"));
 const sockets_1 = require("./sockets");
 const app = (0, express_1.default)();
+const allowedOrigins = (process.env.FRONTEND_URL ?? "http://localhost:3000")
+    .split(",")
+    .map((o) => o.trim());
 app.use((0, cors_1.default)({
-    origin: process.env.FRONTEND_URL ?? "http://localhost:3000",
+    origin: (origin, callback) => {
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true);
+        }
+        else {
+            callback(new Error("Not allowed by CORS"));
+        }
+    },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
@@ -48,6 +60,7 @@ app.get("/health", (_req, res) => res.json({ status: "ok", timestamp: new Date()
 // they're mounted before the global JSON parser.
 app.use("/webhooks", webhooks_1.default);
 app.use(express_1.default.json());
+app.use("/auth", auth_1.default);
 app.use("/users", users_1.default);
 app.use("/courses", courses_1.default);
 app.use("/cohorts", cohorts_1.default);
@@ -64,11 +77,12 @@ app.use("/reports", reports_1.default);
 app.use("/bulk", bulk_1.default);
 app.use("/badges", badges_1.default);
 app.use("/notifications", notifications_1.default);
+app.use("/campaigns", campaigns_1.default);
 app.use((err, _req, res, _next) => {
     if (err instanceof errors_1.ApiError) {
         return res.status(err.status).json({ error: err.message });
     }
-    if (err instanceof db_1.Prisma.PrismaClientKnownRequestError && err.code === "P2025") {
+    if (err instanceof db_1.PrismaClientKnownRequestError && err.code === "P2025") {
         return res.status(404).json({ error: "Not found" });
     }
     console.error(err);

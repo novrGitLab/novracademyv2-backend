@@ -157,4 +157,49 @@ router.post("/daily", express.raw({ type: "application/json" }), async (req, res
   res.status(200).json({ received: true });
 });
 
+// ─── GoPhish Webhook ─────────────────────────────────────────────────────
+
+interface GoPhishEvent {
+  campaign_id: number;
+  email: string;
+  message: string;
+  details?: Record<string, unknown>;
+}
+
+const EVENT_MAP: Record<string, string> = {
+  "Email Sent": "sent",
+  "Email Opened": "opened",
+  "Clicked Link": "clicked",
+  "Submitted Data": "submitted",
+  "Email Reported": "reported",
+};
+
+router.post("/gophish", async (req, res) => {
+  const { campaign_id, email, message, details } = req.body as GoPhishEvent;
+
+  try {
+    // Find the campaign by gophishCampaignId
+    const campaign = await prisma.campaign.findFirst({
+      where: { gophishCampaignId: campaign_id },
+    });
+
+    if (campaign) {
+      await prisma.campaignResult.create({
+        data: {
+          campaignId: campaign.id,
+          gophishCampaignId: campaign_id,
+          employeeEmail: email,
+          eventType: EVENT_MAP[message] || message,
+          metadata: (details || {}) as any,
+        },
+      });
+    }
+
+    res.status(200).json({ received: true });
+  } catch (err) {
+    console.error("GoPhish webhook error:", err);
+    res.status(500).json({ error: "Webhook processing failed" });
+  }
+});
+
 export default router;

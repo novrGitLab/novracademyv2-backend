@@ -854,3 +854,40 @@ model Payment {
   @@index([userId])
   @@index([status])
 }
+
+// =========================================================================
+// GoPhish Integration
+// =========================================================================
+
+model Campaign {
+  id                 String   @id @default(cuid())
+  gophishCampaignId  Int?
+  name               String
+  type               String   @default("phishing")
+  status             String   @default("draft")
+  launchedAt         DateTime?
+  completedAt        DateTime?
+  results            Json     @default("{}")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  campaignResults CampaignResult[]
+
+  @@index([status])
+}
+
+model CampaignResult {
+  id                String   @id @default(cuid())
+  campaignId        String
+  gophishCampaignId Int
+  employeeEmail     String
+  eventType         String
+  metadata          Json     @default("{}")
+  createdAt         DateTime @default(now())
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+  @@index([employeeEmail])
+  @@index([gophishCampaignId])
+}

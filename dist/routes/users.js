@@ -123,7 +123,8 @@ router.patch("/:id", async (req, res) => {
     if ((role || status || managerId !== undefined) && !isAdmin) {
         return res.status(403).json({ error: "Only admins can change role, status, or manager" });
     }
-    const user = await userService.updateUser(req.params.id, parsed.data);
+    const cleanData = Object.fromEntries(Object.entries(parsed.data).filter(([, v]) => v !== null));
+    const user = await userService.updateUser(req.params.id, cleanData);
     res.json(user);
 });
 // DELETE /users/:id — super/org admins only.
