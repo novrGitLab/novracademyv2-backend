@@ -41,18 +41,7 @@ const allowedOrigins = (process.env.FRONTEND_URL ?? "http://localhost:3000")
 
 app.use(
   cors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin (mobile apps, curl, server-to-server)
-      if (!origin) return callback(null, true);
-
-      // Check against allowed origins
-      if (allowedOrigins.some((o) => origin === o || origin.endsWith(`.${new URL(o).hostname}`))) {
-        return callback(null, true);
-      }
-
-      console.error(`CORS blocked origin: ${origin} (allowed: ${allowedOrigins.join(", ")})`);
-      callback(new Error("Not allowed by CORS"));
-    },
+    origin: true,
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "Cookie", "X-Requested-With"],

@@ -32,21 +32,38 @@ function extractSessionToken(req: Request): string | null {
 
 async function resolveUserFromRequest(req: Request): Promise<AuthUser | null> {
   const token = extractSessionToken(req);
-  if (!token) return null;
+  if (!token) {
+    console.log("Auth: no token found in request");
+    return null;
+  }
 
   const secret = process.env.NEXTAUTH_SECRET;
-  if (!secret) throw new Error("NEXTAUTH_SECRET is not configured");
+  if (!secret) {
+    console.error("Auth: NEXTAUTH_SECRET is not configured");
+    throw new Error("NEXTAUTH_SECRET is not configured");
+  }
 
-  const payload = await decode({ token, secret });
-  if (!payload?.sub) return null;
+  try {
+    const payload = await decode({ token, secret });
+    if (!payload?.sub) {
+      console.log("Auth: token decoded but no sub claim");
+      return null;
+    }
 
-  const user = await prisma.user.findUnique({
-    where: { id: payload.sub },
-    select: { id: true, email: true, name: true, role: true, memberType: true, status: true },
-  });
+    const user = await prisma.user.findUnique({
+      where: { id: payload.sub },
+      select: { id: true, email: true, name: true, role: true, memberType: true, status: true },
+    });
 
-  if (!user || user.status !== UserStatus.ACTIVE) return null;
-  return user as AuthUser;
+    if (!user || user.status !== UserStatus.ACTIVE) {
+      console.log(`Auth: user ${payload.sub} not found or inactive`);
+      return null;
+    }
+    return user as AuthUser;
+  } catch (err) {
+    console.error("Auth: token verification failed:", err instanceof Error ? err.message : err);
+    return null;
+  }
 }
 
 /**
