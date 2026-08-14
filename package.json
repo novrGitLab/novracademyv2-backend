@@ -5,8 +5,8 @@
   "main": "index.ts",
   "scripts": {
     "dev": "tsx watch index.ts",
-    "build": "npx prisma generate --schema=packages/db/prisma/schema.prisma && tsc -p tsconfig.json",
-    "start": "node dist/index.js",
+    "build": "npx prisma generate --schema=packages/db/prisma/schema.prisma",
+    "start": "tsx index.ts",
     "typecheck": "tsc --noEmit",
     "db:seed": "npx tsx packages/db/prisma/seed.ts",
     "db:migrate": "npx prisma migrate dev --schema=packages/db/prisma/schema.prisma",
@@ -33,9 +33,11 @@
     "next-auth": "^4.24.11",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "prisma": "^5.22.0",
     "resend": "^4.0.1",
     "socket.io": "^4.8.1",
     "stripe": "^17.5.0",
+    "tsx": "^4.19.2",
     "zod": "^3.24.1"
   },
   "devDependencies": {
@@ -45,8 +47,6 @@
     "@types/express": "^4.17.21",
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.0",
-    "prisma": "^5.22.0",
-    "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }
 }
