@@ -94,7 +94,6 @@ router.post("/", async (req, res) => {
       smtpName: smtpData.name,
       groupName: groupData.name,
       url: campaignUrl,
-      webhookUrl: process.env.GOPHISH_WEBHOOK_URL,
     });
     const campaignData = campaignRes.data?.data || campaignRes.data;
     console.log("GoPhish: Campaign launched:", campaignData?.id);

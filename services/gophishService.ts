@@ -93,7 +93,6 @@ export interface LaunchCampaignParams {
   smtpName: string;
   groupName: string;
   url: string;
-  webhookUrl?: string;
 }
 
 export async function launchCampaign(params: LaunchCampaignParams) {
@@ -104,7 +103,6 @@ export async function launchCampaign(params: LaunchCampaignParams) {
     smtp: { name: params.smtpName },
     groups: [{ name: params.groupName }],
     url: params.url,
-    ...(params.webhookUrl ? { webhook_url: params.webhookUrl } : {}),
   });
   return handleResponse("Campaign", res);
 }
