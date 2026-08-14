@@ -31,12 +31,16 @@ function handleResponse(label: string, res: AxiosResponse) {
 // ─── Resources ───────────────────────────────────────────────────────────
 
 export async function createSendingProfile(name: string) {
+  // GoPhish's SMTP model has no separate port field — host must be host:port
+  // (GoPhish defaults to port 25 and silently drops any extra "port" JSON key)
+  const smtpHost = process.env.GOPHISH_SMTP_HOST ?? "mailhog";
+  const smtpPort = process.env.GOPHISH_SMTP_PORT ?? "1025";
+  const host = smtpHost.includes(":") ? smtpHost : `${smtpHost}:${smtpPort}`;
   const res = await client.post("/smtp/", {
     name,
     interface_type: "SMTP",
     from_address: "security@novracademy.com",
-    host: process.env.GOPHISH_SMTP_HOST ?? "mailhog",
-    port: parseInt(process.env.GOPHISH_SMTP_PORT ?? "1025"),
+    host,
     username: "",
     password: "",
     ignore_cert_errors: true,
