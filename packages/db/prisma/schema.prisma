@@ -264,6 +264,7 @@ model User {
   notifications     Notification[]
   payments          Payment[]
   aiConversations   CourseAiConversation[]
+  campaignResults   CampaignResult[]
 
   @@index([role])
   @@index([memberType])
@@ -861,7 +862,7 @@ model Payment {
 
 model Campaign {
   id                 String   @id @default(cuid())
-  gophishCampaignId  Int?
+  gophishCampaignId  Int?     @unique
   name               String
   type               String   @default("phishing")
   status             String   @default("draft")
@@ -880,14 +881,17 @@ model CampaignResult {
   id                String   @id @default(cuid())
   campaignId        String
   gophishCampaignId Int
+  userId            String?
   employeeEmail     String
   eventType         String
   metadata          Json     @default("{}")
   createdAt         DateTime @default(now())
 
   campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  user     User?    @relation(fields: [userId], references: [id])
 
   @@index([campaignId])
+  @@index([userId])
   @@index([employeeEmail])
   @@index([gophishCampaignId])
 }

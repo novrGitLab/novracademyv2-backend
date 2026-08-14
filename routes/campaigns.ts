@@ -36,6 +36,27 @@ router.post("/", async (req, res) => {
   const campaignUrl = process.env.GOPHISH_CAMPAIGN_URL ?? "http://172.236.25.61:3005";
   const timestamp = Date.now();
 
+  // Single-tenant: every target must resolve to an existing User record
+  const targetEmails = employeeEmails.map((e) => e.email.toLowerCase());
+  const users = await prisma.user.findMany({ where: { email: { in: targetEmails } } });
+  const userByEmail = new Map(users.map((u) => [u.email.toLowerCase(), u]));
+  const missing = targetEmails.filter((e) => !userByEmail.has(e));
+  if (missing.length > 0) {
+    return res.status(400).json({
+      error: "Unknown target emails (no matching User record)",
+      emails: missing,
+    });
+  }
+  const targets = users.map((u) => {
+    const [first, ...rest] = (u.name ?? "").split(" ").filter(Boolean);
+    return {
+      email: u.email,
+      firstName: first || u.email.split("@")[0],
+      lastName: rest.join(" "),
+      userId: u.id,
+    };
+  });
+
   // Unique names to avoid conflicts with existing resources
   const smtpName = `${name}-smtp-${timestamp}`;
   const pageName = `${name}-page-${timestamp}`;
@@ -60,7 +81,7 @@ router.post("/", async (req, res) => {
     console.log("GoPhish: Template created:", templateData?.id);
 
     console.log("GoPhish: Creating group...");
-    const groupRes = await gophish.createGroup(groupName, employeeEmails);
+    const groupRes = await gophish.createGroup(groupName, targets);
     const groupData = groupRes.data?.data || groupRes.data;
     console.log("GoPhish: Group created:", groupData?.id);
 
@@ -73,6 +94,7 @@ router.post("/", async (req, res) => {
       smtpName: smtpData.name,
       groupName: groupData.name,
       url: campaignUrl,
+      webhookUrl: process.env.GOPHISH_WEBHOOK_URL,
     });
     const campaignData = campaignRes.data?.data || campaignRes.data;
     console.log("GoPhish: Campaign launched:", campaignData?.id);
@@ -148,7 +170,37 @@ router.get("/:id/results", async (req, res) => {
     const stats = summaryRes.data.stats || {};
 
     // Official GoPhish results response: { results: [{ status, email, first_name, last_name, ip, send_date, modified_date }] }
-    const results = resultsRes.data.results || [];
+    const results: any[] = resultsRes.data.results || [];
+
+    // Persist one CampaignResult row per (target, event) — idempotent across polls
+    const STATUS_TO_EVENT: Record<string, string> = {
+      Sent: "sent",
+      Opened: "opened",
+      "Clicked Link": "clicked",
+      "Submitted Data": "submitted",
+      "Email Reported": "reported",
+    };
+    const resultEmails = [...new Set(results.map((r: any) => String(r.email)))];
+    const resultUsers = await prisma.user.findMany({ where: { email: { in: resultEmails } } });
+    const userIdByEmail = new Map(resultUsers.map((u) => [u.email.toLowerCase(), u.id]));
+    for (const r of results) {
+      const eventType = STATUS_TO_EVENT[r.status] ?? r.status;
+      const resultId = `cr_${campaign.id}_${Buffer.from(r.email).toString("hex")}_${eventType}`;
+      const meta = { status: r.status, ip: r.ip ?? null, sendDate: r.send_date ?? null, modifiedDate: r.modified_date ?? null };
+      await prisma.campaignResult.upsert({
+        where: { id: resultId },
+        create: {
+          id: resultId,
+          campaignId: campaign.id,
+          gophishCampaignId: campaign.gophishCampaignId,
+          userId: userIdByEmail.get(r.email.toLowerCase()) ?? null,
+          employeeEmail: r.email,
+          eventType,
+          metadata: meta,
+        },
+        update: { metadata: meta },
+      });
+    }
 
     const report = {
       total: stats.total || 0,
@@ -180,7 +232,7 @@ router.get("/:id/results", async (req, res) => {
 
     // Update database with latest results
     await prisma.campaign.update({
-      where: { id: req.params.id },
+      where: { id: campaign.id },
       data: { results: report as any },
     });
 
