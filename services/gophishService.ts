@@ -39,10 +39,10 @@ export async function createSendingProfile(name: string) {
   const res = await client.post("/smtp/", {
     name,
     interface_type: "SMTP",
-    from_address: "security@novracademy.com",
+    from_address: process.env.GOPHISH_SMTP_FROM_ADDRESS ?? "security@novracademy.com",
     host,
-    username: "",
-    password: "",
+    username: process.env.GOPHISH_SMTP_USERNAME ?? "",
+    password: process.env.GOPHISH_SMTP_PASSWORD ?? "",
     ignore_cert_errors: true,
   });
   return handleResponse("SMTP", res);
@@ -93,7 +93,6 @@ export interface LaunchCampaignParams {
   smtpName: string;
   groupName: string;
   url: string;
-  webhookUrl?: string;
 }
 
 export async function launchCampaign(params: LaunchCampaignParams) {
@@ -104,7 +103,6 @@ export async function launchCampaign(params: LaunchCampaignParams) {
     smtp: { name: params.smtpName },
     groups: [{ name: params.groupName }],
     url: params.url,
-    ...(params.webhookUrl ? { webhook_url: params.webhookUrl } : {}),
   });
   return handleResponse("Campaign", res);
 }
