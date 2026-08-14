@@ -39,10 +39,10 @@ export async function createSendingProfile(name: string) {
   const res = await client.post("/smtp/", {
     name,
     interface_type: "SMTP",
-    from_address: "security@novracademy.com",
+    from_address: process.env.GOPHISH_SMTP_FROM_ADDRESS ?? "security@novracademy.com",
     host,
-    username: "",
-    password: "",
+    username: process.env.GOPHISH_SMTP_USERNAME ?? "",
+    password: process.env.GOPHISH_SMTP_PASSWORD ?? "",
     ignore_cert_errors: true,
   });
   return handleResponse("SMTP", res);

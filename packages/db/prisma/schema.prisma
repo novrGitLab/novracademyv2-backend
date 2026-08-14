@@ -869,6 +869,8 @@ model Campaign {
   launchedAt         DateTime?
   completedAt        DateTime?
   results            Json     @default("{}")
+  templateHtml       String?
+  landingPageHtml    String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 

@@ -105,6 +105,8 @@ router.post("/", async (req, res) => {
         name,
         status: "active",
         launchedAt: new Date(),
+        templateHtml,
+        landingPageHtml,
       },
     });
 
