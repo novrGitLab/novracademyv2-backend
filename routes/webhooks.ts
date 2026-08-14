@@ -174,7 +174,9 @@ const EVENT_MAP: Record<string, string> = {
   "Email Reported": "reported",
 };
 
-router.post("/gophish", async (req, res) => {
+// Mounted under /webhooks before the global express.json(), so this route
+// needs its own JSON parser to read the GoPhish event body.
+router.post("/gophish", express.json(), async (req, res) => {
   const { campaign_id, email, message, details } = req.body as GoPhishEvent;
 
   try {
@@ -184,10 +186,15 @@ router.post("/gophish", async (req, res) => {
     });
 
     if (campaign) {
+      const user = await prisma.user.findFirst({
+        where: { email: { equals: email, mode: "insensitive" } },
+        select: { id: true },
+      });
       await prisma.campaignResult.create({
         data: {
           campaignId: campaign.id,
           gophishCampaignId: campaign_id,
+          userId: user?.id,
           employeeEmail: email,
           eventType: EVENT_MAP[message] || message,
           metadata: (details || {}) as any,
