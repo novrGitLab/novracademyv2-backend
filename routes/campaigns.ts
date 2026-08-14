@@ -111,10 +111,12 @@ router.get("/", async (_req, res) => {
   res.json(campaigns);
 });
 
-// GET /campaigns/:id — get single campaign
+// GET /campaigns/:id — get single campaign (accepts DB id or GoPhish id)
 router.get("/:id", async (req, res) => {
-  const campaign = await prisma.campaign.findUnique({
-    where: { id: req.params.id },
+  const id = req.params.id;
+  const isNumeric = /^\d+$/.test(id);
+  const campaign = await prisma.campaign.findFirst({
+    where: isNumeric ? { gophishCampaignId: parseInt(id) } : { id },
     include: { campaignResults: true },
   });
   if (!campaign) return res.status(404).json({ error: "Campaign not found" });
@@ -125,8 +127,10 @@ router.get("/:id", async (req, res) => {
 // Official GoPhish API: GET /campaigns/:id/summary returns { stats: {...} }
 // Official GoPhish API: GET /campaigns/:id/results returns { results: [...] }
 router.get("/:id/results", async (req, res) => {
-  const campaign = await prisma.campaign.findUnique({
-    where: { id: req.params.id },
+  const id = req.params.id;
+  const isNumeric = /^\d+$/.test(id);
+  const campaign = await prisma.campaign.findFirst({
+    where: isNumeric ? { gophishCampaignId: parseInt(id) } : { id },
   });
   if (!campaign) return res.status(404).json({ error: "Campaign not found" });
   if (!campaign.gophishCampaignId) {
@@ -187,10 +191,13 @@ router.get("/:id/results", async (req, res) => {
   }
 });
 
-// DELETE /campaigns/:id — delete campaign
+// DELETE /campaigns/:id — delete campaign (accepts DB id or GoPhish id)
 router.delete("/:id", async (req, res) => {
-  const campaign = await prisma.campaign.findUnique({
-    where: { id: req.params.id },
+  const id = req.params.id;
+  const isNumeric = /^\d+$/.test(id);
+
+  const campaign = await prisma.campaign.findFirst({
+    where: isNumeric ? { gophishCampaignId: parseInt(id) } : { id },
   });
   if (!campaign) return res.status(404).json({ error: "Campaign not found" });
 
@@ -202,7 +209,7 @@ router.delete("/:id", async (req, res) => {
     }
   }
 
-  await prisma.campaign.delete({ where: { id: req.params.id } });
+  await prisma.campaign.delete({ where: { id: campaign.id } });
   res.status(204).send();
 });
 
