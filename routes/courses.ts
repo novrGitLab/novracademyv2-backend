@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
-import { ADMIN_ROLES, CourseStatus } from "@novr/types";
+import { prisma } from "@novr/db";
+import { ADMIN_ROLES, CourseStatus, EnrollmentStatus } from "@novr/types";
 import { sanitizeCourseForViewer } from "../lib/quizSanitize";
 import { authenticate, requireRole } from "../middleware/auth";
 import * as aiAssistantService from "../services/aiAssistantService";
@@ -43,13 +44,32 @@ router.get("/:id", async (req, res) => {
   if (course.status !== CourseStatus.PUBLISHED && !isAdmin) {
     return res.status(403).json({ error: "Course is not published" });
   }
-  res.json(sanitizeCourseForViewer(course, isAdmin));
+
+  // Enrollment state for the requesting user — drives the student UI's
+  // Enroll-vs-Resume decision without a separate progress round-trip.
+  const enrollment = await prisma.enrollment.findFirst({
+    where: { userId: req.user!.id, courseId: course.id, status: EnrollmentStatus.ACTIVE },
+    select: { progressPct: true },
+  });
+  res.json({
+    ...sanitizeCourseForViewer(course, isAdmin),
+    enrolled: !!enrollment,
+    progressPct: enrollment?.progressPct ?? 0,
+  });
 });
 
 const createCourseSchema = z.object({
   title: z.string().min(1),
   description: z.string().optional(),
-  thumbnailUrl: z.string().url().optional(),
+  // Thumbnail is either a hosted URL or an uploaded base64 image data URL
+  thumbnailUrl: z
+    .string()
+    .max(10_000_000)
+    .refine(
+      (v) => v.startsWith("http") || v.startsWith("data:image/"),
+      "thumbnailUrl must be a URL or an image data URL"
+    )
+    .optional(),
   priceCents: z.number().int().min(0).optional(),
   currency: z.string().length(3).optional(),
   passMarkPct: z.number().int().min(0).max(100).optional(),

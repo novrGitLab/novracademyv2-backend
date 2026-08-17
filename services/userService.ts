@@ -88,6 +88,7 @@ export interface CreateUserInput {
   role?: UserRole;
   memberType?: MemberType;
   managerId?: string;
+  organizationId?: string;
   password?: string;
 }
 
@@ -100,6 +101,7 @@ export async function createUser(input: CreateUserInput) {
       role: input.role,
       memberType: input.memberType,
       managerId: input.managerId,
+      organizationId: input.organizationId,
       ...(passwordHash && { passwordHash }),
     },
     select: listSelect,

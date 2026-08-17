@@ -36,18 +36,37 @@ router.post("/", async (req, res) => {
   const campaignUrl = process.env.GOPHISH_CAMPAIGN_URL ?? "http://172.236.25.61:3005";
   const timestamp = Date.now();
 
-  // Single-tenant: every target must resolve to an existing User record
+  // Single-tenant: every target must resolve to an existing User record.
+  // In development, unknown targets (e.g. the dev test accounts that bypass
+  // the DB on the frontend) are auto-provisioned as LEARNER rows so the
+  // launch flow works with any email while prototyping.
   const targetEmails = employeeEmails.map((e) => e.email.toLowerCase());
   const users = await prisma.user.findMany({ where: { email: { in: targetEmails } } });
   const userByEmail = new Map(users.map((u) => [u.email.toLowerCase(), u]));
   const missing = targetEmails.filter((e) => !userByEmail.has(e));
   if (missing.length > 0) {
-    return res.status(400).json({
-      error: "Unknown target emails (no matching User record)",
-      emails: missing,
+    const isDev = !process.env.NODE_ENV || process.env.NODE_ENV === "development";
+    if (!isDev) {
+      return res.status(400).json({
+        error: "Unknown target emails (no matching User record)",
+        emails: missing,
+      });
+    }
+    await prisma.user.createMany({
+      data: missing.map((email) => ({
+        email,
+        name: email
+          .split("@")[0]
+          .replace(/[._-]+/g, " ")
+          .replace(/\b\w/g, (c) => c.toUpperCase()),
+        role: "LEARNER",
+      })),
+      skipDuplicates: true,
     });
+    const created = await prisma.user.findMany({ where: { email: { in: missing } } });
+    for (const u of created) userByEmail.set(u.email.toLowerCase(), u);
   }
-  const targets = users.map((u) => {
+  const targets = [...userByEmail.values()].map((u) => {
     const [first, ...rest] = (u.name ?? "").split(" ").filter(Boolean);
     return {
       email: u.email,

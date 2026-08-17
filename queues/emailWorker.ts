@@ -170,6 +170,23 @@ async function processEmailJob(job: { data: unknown }) {
         );
         break;
       }
+
+      case "admin_welcome": {
+        const user = await prisma.user.findUnique({
+          where: { id: data.userId },
+          include: { organization: true },
+        });
+        if (!user?.organization) return;
+        await emailService.sendAdminWelcomeEmail({
+          to: user.email,
+          orgName: user.organization.name,
+          adminName: user.name ?? user.email,
+          email: user.email,
+          loginUrl: `${APP_URL}/login`,
+          tempPassword: data.tempPassword,
+        });
+        break;
+      }
     }
 }
 

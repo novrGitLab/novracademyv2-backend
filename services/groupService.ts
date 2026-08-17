@@ -24,9 +24,11 @@ async function uniqueSlug(name: string, excludeId?: string): Promise<string> {
 
 /** Every member is auto-joined to this single, platform-wide channel. */
 export async function ensureGeneralGroup() {
-  const existing = await prisma.communityGroup.findFirst({ where: { type: GroupType.GENERAL } });
-  if (existing) return existing;
-  return prisma.communityGroup.create({ data: { name: "General", slug: "general", type: GroupType.GENERAL } });
+  return prisma.communityGroup.upsert({
+    where: { slug: "general" },
+    create: { name: "General", slug: "general", type: GroupType.GENERAL },
+    update: {},
+  });
 }
 
 export async function joinGroup(userId: string, groupId: string) {

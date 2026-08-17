@@ -223,11 +223,14 @@ model User {
   openToWork         Boolean         @default(false)
   publicProfileSlug  String?         @unique
   managerId          String?
+  organizationId     String?
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
 
   manager       User?  @relation("ManagerTeam", fields: [managerId], references: [id])
   directReports User[] @relation("ManagerTeam")
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
 
   accounts Account[]
   sessions Session[]
@@ -268,6 +271,30 @@ model User {
 
   @@index([role])
   @@index([memberType])
+  @@index([organizationId])
+}
+
+// =========================================================================
+// Organizations (multi-tenant)
+// =========================================================================
+
+model Organization {
+  id              String   @id @default(cuid())
+  name            String
+  slug            String   @unique
+  plan            String   @default("free")
+  logoUrl         String?
+  primaryColor    String?
+  secondaryColor  String?
+  accentColor     String?
+  backgroundColor String?
+  textColor       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  users User[]
+
+  @@index([plan])
 }
 
 // =========================================================================
@@ -316,7 +343,7 @@ model Course {
   thumbnailUrl      String?
   status            CourseStatus @default(DRAFT)
   priceCents        Int          @default(0)
-  currency          String       @default("USD")
+  currency          String       @default("NGN")
   passMarkPct       Int          @default(70)
   allowForwardScrub Boolean      @default(false)
   defaultValidityDays Int?

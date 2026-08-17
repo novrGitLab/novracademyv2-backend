@@ -1,6 +1,7 @@
 import type { ReactElement } from "react";
 import { Resend } from "resend";
 import { AlumniInviteEmail } from "../emails/AlumniInviteEmail";
+import { AdminWelcomeEmail } from "../emails/AdminWelcomeEmail";
 import { CertificateIssuedEmail } from "../emails/CertificateIssuedEmail";
 import { EnrollmentConfirmedEmail } from "../emails/EnrollmentConfirmedEmail";
 import { EventReminderEmail } from "../emails/EventReminderEmail";
@@ -107,6 +108,18 @@ export async function sendJobAlertEmail(params: {
 }) {
   const { to, ...props } = params;
   await sendEmail(to, `New opportunity: ${props.title} at ${props.company}`, <JobAlertEmail {...props} />);
+}
+
+export async function sendAdminWelcomeEmail(params: {
+  to: string;
+  orgName: string;
+  adminName: string;
+  email: string;
+  loginUrl: string;
+  tempPassword: string;
+}) {
+  const { to, ...props } = params;
+  await sendEmail(to, `Your ${props.orgName} account is ready`, <AdminWelcomeEmail {...props} />);
 }
 
 export async function sendLiveClassReminderEmail(params: {
