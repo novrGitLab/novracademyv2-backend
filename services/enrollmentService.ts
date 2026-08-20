@@ -99,6 +99,16 @@ export async function assignEnrollment(input: AssignEnrollmentInput) {
     },
   });
 
+  // Auto-mark course as mandatory compliance for the assigning admin's org
+  const assigner = await prisma.user.findUnique({ where: { id: input.assignedById }, select: { organizationId: true } });
+  if (assigner?.organizationId) {
+    await prisma.complianceAssignment.upsert({
+      where: { courseId_organizationId: { courseId: input.courseId, organizationId: assigner.organizationId } },
+      create: { courseId: input.courseId, organizationId: assigner.organizationId },
+      update: {},
+    });
+  }
+
   await enqueueEnrollmentConfirmedEmail(enrollment.id);
   enqueueExpiryWarnings(enrollment.id, enrollment.expiresAt);
 
@@ -111,14 +121,19 @@ export interface BulkAssignInput {
   userIds?: string[];
   emails?: string[];
   validityDays?: number;
+  organizationId?: string | null;
 }
 
 export async function bulkAssignEnrollments(input: BulkAssignInput) {
   let userIds = input.userIds ?? [];
 
   if (input.emails?.length) {
+    const where: Record<string, unknown> = { email: { in: input.emails } };
+    if (input.organizationId) {
+      where.organizationId = input.organizationId;
+    }
     const users = await prisma.user.findMany({
-      where: { email: { in: input.emails } },
+      where,
       select: { id: true, email: true },
     });
     userIds = [...userIds, ...users.map((u) => u.id)];

@@ -1,8 +1,11 @@
 import { Router } from "express";
+import crypto from "crypto";
 import { z } from "zod";
 import { MemberType, UserRole, UserStatus, ADMIN_ROLES } from "@novr/types";
+import { prisma } from "@novr/db";
 import { authenticate, requireRole } from "../middleware/auth";
 import * as userService from "../services/userService";
+import { enqueueAdminWelcomeEmail } from "../queues/emailQueue";
 
 const router = Router();
 
@@ -18,12 +21,21 @@ const listQuerySchema = z.object({
 });
 
 // GET /users — admins/managers only (managers browsing their org).
+// ORG_ADMIN/INSTITUTION_ADMIN see only their org's users.
 router.get("/", requireRole(...ADMIN_ROLES, UserRole.MANAGER), async (req, res) => {
   const parsed = listQuerySchema.safeParse(req.query);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.flatten() });
   }
-  const result = await userService.listUsers(parsed.data);
+
+  const orgId = req.user!.role === UserRole.SUPER_ADMIN
+    ? undefined
+    : req.user!.organizationId;
+
+  const result = await userService.listUsers({
+    ...parsed.data,
+    organizationId: orgId ?? null,
+  });
   res.json(result);
 });
 
@@ -61,13 +73,41 @@ const createUserSchema = z.object({
 });
 
 // POST /users — admins only.
+// ORG_ADMIN creates users under their org with a generated temp password.
 router.post("/", requireRole(...ADMIN_ROLES), async (req, res) => {
   const parsed = createUserSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.flatten() });
   }
-  const user = await userService.createUser(parsed.data);
-  res.status(201).json(user);
+
+  const orgId = req.user!.role === UserRole.SUPER_ADMIN
+    ? req.body.organizationId
+    : req.user!.organizationId;
+
+  // Generate temp password if not provided
+  const tempPassword = parsed.data.password || crypto.randomBytes(8).toString("base64url");
+
+  try {
+    const user = await userService.createUser({
+      ...parsed.data,
+      password: tempPassword,
+      organizationId: orgId,
+      mustChangePassword: !parsed.data.password,
+    });
+
+    // Send welcome email with temp password
+    await enqueueAdminWelcomeEmail(user.id, tempPassword);
+
+    res.status(201).json({
+      ...user,
+      tempPassword: !parsed.data.password ? tempPassword : undefined,
+    });
+  } catch (err: any) {
+    if (err.message?.includes("already exists")) {
+      return res.status(409).json({ error: err.message });
+    }
+    throw err;
+  }
 });
 
 const updateUserSchema = z.object({
@@ -110,6 +150,33 @@ router.patch("/:id", async (req, res) => {
 router.delete("/:id", requireRole(...ADMIN_ROLES), async (req, res) => {
   await userService.deleteUser(req.params.id);
   res.status(204).send();
+});
+
+const resetPasswordSchema = z.object({
+  password: z.string().min(8),
+});
+
+// PATCH /users/:id/password — self or admins can reset password.
+router.patch("/:id/password", async (req, res) => {
+  const isSelf = req.user!.id === req.params.id;
+  const isAdmin = ADMIN_ROLES.includes(req.user!.role);
+  if (!isSelf && !isAdmin) {
+    return res.status(403).json({ error: "Insufficient permissions" });
+  }
+
+  const parsed = resetPasswordSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const bcrypt = await import("bcryptjs");
+  const passwordHash = await bcrypt.default.hash(parsed.data.password, 10);
+
+  await prisma.user.update({
+    where: { id: req.params.id },
+    data: { passwordHash, mustChangePassword: false } as any,
+  });
+  res.json({ success: true });
 });
 
 export default router;

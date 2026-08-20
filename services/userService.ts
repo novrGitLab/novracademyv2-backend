@@ -13,6 +13,7 @@ const listSelect = {
   status: true,
   xp: true,
   reputationLevel: true,
+  lastLoginAt: true,
   createdAt: true,
 } as const;
 
@@ -21,6 +22,7 @@ export interface ListUsersParams {
   memberType?: MemberType;
   status?: UserStatus;
   search?: string;
+  organizationId?: string | null;
   page?: number;
   pageSize?: number;
 }
@@ -33,6 +35,7 @@ export async function listUsers(params: ListUsersParams) {
     role: params.role,
     memberType: params.memberType,
     status: params.status,
+    ...(params.organizationId !== undefined && { organizationId: params.organizationId }),
     ...(params.search
       ? {
           OR: [
@@ -90,9 +93,16 @@ export interface CreateUserInput {
   managerId?: string;
   organizationId?: string;
   password?: string;
+  mustChangePassword?: boolean;
 }
 
 export async function createUser(input: CreateUserInput) {
+  // Check if user already exists
+  const existing = await prisma.user.findUnique({ where: { email: input.email } });
+  if (existing) {
+    throw new Error("An account with that email already exists");
+  }
+
   const passwordHash = input.password ? await bcrypt.hash(input.password, 10) : undefined;
   const user = await prisma.user.create({
     data: {
@@ -102,6 +112,7 @@ export async function createUser(input: CreateUserInput) {
       memberType: input.memberType,
       managerId: input.managerId,
       organizationId: input.organizationId,
+      mustChangePassword: input.mustChangePassword ?? false,
       ...(passwordHash && { passwordHash }),
     },
     select: listSelect,

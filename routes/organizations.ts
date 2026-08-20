@@ -75,6 +75,7 @@ router.post("/", requireRole(UserRole.SUPER_ADMIN), async (req, res) => {
     role: UserRole.ORG_ADMIN,
     organizationId: organization.id,
     password: tempPassword,
+    mustChangePassword: true,
   });
 
   await enqueueAdminWelcomeEmail(admin.id, tempPassword);
@@ -142,6 +143,168 @@ router.post("/:id/logo", async (req, res) => {
     data: { logoUrl: parsed.data.logoUrl },
   });
   res.json(updated);
+});
+
+// GET /organizations/:id/users — list users in a tenant
+router.get("/:id/users", requireRole(...ADMIN_ROLES), async (req, res) => {
+  const organization = await prisma.organization.findUnique({ where: { id: req.params.id } });
+  if (!organization) return res.status(404).json({ error: "Organization not found" });
+
+  if (!(await canManageOrg(req.user!.id, organization.id, req.user!.role))) {
+    return res.status(403).json({ error: "Insufficient permissions" });
+  }
+
+  const page = Math.max(1, parseInt(req.query.page as string) || 1);
+  const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize as string) || 20));
+  const search = req.query.search as string | undefined;
+
+  const where: Record<string, unknown> = { organizationId: organization.id };
+  if (search) {
+    where.OR = [
+      { name: { contains: search, mode: "insensitive" } },
+      { email: { contains: search, mode: "insensitive" } },
+    ];
+  }
+
+  const [users, total] = await Promise.all([
+    prisma.user.findMany({
+      where,
+      select: { id: true, email: true, name: true, role: true, status: true, createdAt: true },
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+    prisma.user.count({ where }),
+  ]);
+
+  res.json({ users, total, page, pageSize });
+});
+
+// GET /organizations/:id/stats — user count, course count, compliance rate
+router.get("/:id/stats", requireRole(...ADMIN_ROLES), async (req, res) => {
+  const organization = await prisma.organization.findUnique({ where: { id: req.params.id } });
+  if (!organization) return res.status(404).json({ error: "Organization not found" });
+
+  if (!(await canManageOrg(req.user!.id, organization.id, req.user!.role))) {
+    return res.status(403).json({ error: "Insufficient permissions" });
+  }
+
+  const [userCount, courseCount, enrollmentCount, complianceSetting] = await Promise.all([
+    prisma.user.count({ where: { organizationId: organization.id } }),
+    prisma.course.count({ where: { organizationId: organization.id } }),
+    prisma.enrollment.count({ where: { course: { organizationId: organization.id } } }),
+    prisma.complianceSetting.findUnique({ where: { organizationId: organization.id } }),
+  ]);
+
+  res.json({
+    userCount,
+    courseCount,
+    enrollmentCount,
+    complianceSetting,
+  });
+});
+
+// DELETE /organizations/:id — SUPER_ADMIN only. Removes the org and its users.
+router.delete("/:id", requireRole(UserRole.SUPER_ADMIN), async (req, res) => {
+  const organization = await prisma.organization.findUnique({ where: { id: req.params.id } });
+  if (!organization) return res.status(404).json({ error: "Organization not found" });
+
+  const orgId = organization.id;
+
+  try {
+    // Single raw SQL transaction — avoids Prisma transaction timeout on many
+    // sequential statements and handles all RESTRICT FKs on User.
+    await prisma.$executeRawUnsafe(`
+      DO $$
+      DECLARE
+        uid TEXT;
+      BEGIN
+        -- Nullify org-owned records
+        UPDATE "Course" SET "organizationId" = NULL WHERE "organizationId" = '${orgId}';
+        UPDATE "Cohort" SET "organizationId" = NULL WHERE "organizationId" = '${orgId}';
+        UPDATE "Campaign" SET "organizationId" = NULL WHERE "organizationId" = '${orgId}';
+
+        -- Delete per-user records that lack ON DELETE CASCADE
+        FOR uid IN SELECT id FROM "User" WHERE "organizationId" = '${orgId}' LOOP
+          DELETE FROM "GroupMember" WHERE "userId" = uid;
+          DELETE FROM "Notification" WHERE "userId" = uid;
+          DELETE FROM "Payment" WHERE "userId" = uid;
+          DELETE FROM "Certificate" WHERE "userId" = uid;
+          DELETE FROM "Enrollment" WHERE "userId" = uid;
+          DELETE FROM "UserBadge" WHERE "userId" = uid;
+          DELETE FROM "MentorSession" WHERE "mentorId" = uid OR "menteeId" = uid;
+          DELETE FROM "EventRsvp" WHERE "userId" = uid;
+          DELETE FROM "CommunityPost" WHERE "authorId" = uid;
+          DELETE FROM "MessageThreadParticipant" WHERE "userId" = uid;
+          DELETE FROM "CourseAiConversation" WHERE "userId" = uid;
+          DELETE FROM "CampaignResult" WHERE "userId" = uid;
+          DELETE FROM "JobListing" WHERE "postedById" = uid;
+          DELETE FROM "LessonProgress" WHERE "userId" = uid;
+          DELETE FROM "QuizAttempt" WHERE "userId" = uid;
+          DELETE FROM "UserCohort" WHERE "userId" = uid;
+          DELETE FROM "PostBookmark" WHERE "userId" = uid;
+          DELETE FROM "PostComment" WHERE "authorId" = uid;
+          DELETE FROM "PostReaction" WHERE "userId" = uid;
+          DELETE FROM "Message" WHERE "senderId" = uid;
+          DELETE FROM "MentorProfile" WHERE "userId" = uid;
+          DELETE FROM "Event" WHERE "hostId" = uid;
+        END LOOP;
+
+        DELETE FROM "User" WHERE "organizationId" = '${orgId}';
+        DELETE FROM "ComplianceAssignment" WHERE "organizationId" = '${orgId}';
+        DELETE FROM "ComplianceSetting" WHERE "organizationId" = '${orgId}';
+        DELETE FROM "Organization" WHERE id = '${orgId}';
+      END $$;
+    `);
+    res.json({ message: `Organization "${organization.name}" deleted` });
+  } catch (err) {
+    console.error("Delete org error:", err);
+    res.status(500).json({ error: "Failed to delete organization" });
+  }
+});
+
+// PATCH /organizations/:id — update org name/plan (SUPER_ADMIN only)
+const updateOrgSchema = z.object({
+  name: z.string().min(1).optional(),
+  plan: z.string().optional(),
+});
+
+router.patch("/:id", requireRole(UserRole.SUPER_ADMIN), async (req, res) => {
+  const organization = await prisma.organization.findUnique({ where: { id: req.params.id } });
+  if (!organization) return res.status(404).json({ error: "Organization not found" });
+
+  const parsed = updateOrgSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const updated = await prisma.organization.update({
+    where: { id: organization.id },
+    data: parsed.data,
+  });
+  res.json(updated);
+});
+
+// PATCH /organizations/:id/sender — update phishing sender config (org admin or super admin)
+const senderSchema = z.object({
+  senderName: z.string().min(1).nullable().optional(),
+  senderEmail: z.string().email().nullable().optional(),
+});
+
+router.patch("/:id/sender", async (req, res) => {
+  const organization = await prisma.organization.findUnique({ where: { id: req.params.id } });
+  if (!organization) return res.status(404).json({ error: "Organization not found" });
+
+  if (!(await canManageOrg(req.user!.id, organization.id, req.user!.role))) {
+    return res.status(403).json({ error: "Insufficient permissions" });
+  }
+
+  const parsed = senderSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const updated = await prisma.organization.update({
+    where: { id: organization.id },
+    data: parsed.data,
+  });
+  res.json({ senderName: updated.senderName, senderEmail: updated.senderEmail });
 });
 
 export default router;
