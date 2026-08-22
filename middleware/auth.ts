@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { decode } from "next-auth/jwt";
+import { jwtVerify } from "jose";
 import { prisma } from "@novr/db";
 import type { AuthUser, UserRole } from "@novr/types";
 import { UserStatus } from "@novr/types";
@@ -44,15 +45,50 @@ async function resolveUserFromRequest(req: Request): Promise<AuthUser | null> {
   }
 
   try {
-    const payload = await decode({ token, secret });
+    // Try NextAuth JWE decode first (frontend session tokens), then fall back
+    // to standard JWS verification (tokens from /auth/login).
+    let payload: Record<string, unknown> | null = null;
+    try {
+      payload = await decode({ token, secret }) as Record<string, unknown> | null;
+    } catch {
+      // Not a JWE token — try JWS verification via jose
+      try {
+        const { payload: jwsPayload } = await jwtVerify(
+          token,
+          new TextEncoder().encode(secret),
+          { algorithms: ["HS256"] },
+        );
+        payload = jwsPayload as Record<string, unknown>;
+      } catch {
+        // Neither JWE nor JWS — invalid token
+      }
+    }
     if (!payload?.sub) {
       console.log("Auth: token decoded but no sub claim");
       return null;
     }
 
+    // Development test accounts (frontend lib/test-credentials.ts) never
+    // touch the database, so their sub isn't a real User id. Accept them
+    // only in development and upsert a real User row so any code storing
+    // req.user.id as a foreign key (courses.createdById, etc.) still works.
+    const isDev = !process.env.NODE_ENV || process.env.NODE_ENV === "development";
+    if (isDev && payload.sub.startsWith("test-")) {
+      const email = (payload.email as string) ?? `${payload.sub}@novr.local`;
+      const role = (payload.role as UserRole) ?? "LEARNER";
+      const name = (payload.name as string) ?? null;
+      const testUser = await prisma.user.upsert({
+        where: { email },
+        create: { email, name, role, status: UserStatus.ACTIVE },
+        update: { role, name, status: UserStatus.ACTIVE },
+        select: { id: true, email: true, name: true, role: true, memberType: true, status: true },
+      });
+      return testUser as AuthUser;
+    }
+
     const user = await prisma.user.findUnique({
       where: { id: payload.sub },
-      select: { id: true, email: true, name: true, role: true, memberType: true, status: true },
+      select: { id: true, email: true, name: true, role: true, memberType: true, status: true, organizationId: true },
     });
 
     if (!user || user.status !== UserStatus.ACTIVE) {

@@ -20,15 +20,16 @@ export async function markAllRead(userId: string) {
 
 export type Segment = "all" | "inactive" | "mentors" | "open_to_work";
 
-async function resolveSegmentUserIds(segment: Segment): Promise<string[]> {
+async function resolveSegmentUserIds(segment: Segment, organizationId?: string | null): Promise<string[]> {
+  const orgFilter = organizationId ? { organizationId } : {};
   switch (segment) {
     case "all": {
-      const users = await prisma.user.findMany({ select: { id: true } });
+      const users = await prisma.user.findMany({ where: orgFilter, select: { id: true } });
       return users.map((u) => u.id);
     }
     case "inactive": {
       const users = await prisma.user.findMany({
-        where: { posts: { none: {} }, sentMessages: { none: {} } },
+        where: { ...orgFilter, posts: { none: {} }, sentMessages: { none: {} } },
         select: { id: true },
       });
       return users.map((u) => u.id);
@@ -38,7 +39,7 @@ async function resolveSegmentUserIds(segment: Segment): Promise<string[]> {
       return profiles.map((p) => p.userId);
     }
     case "open_to_work": {
-      const users = await prisma.user.findMany({ where: { openToWork: true }, select: { id: true } });
+      const users = await prisma.user.findMany({ where: { ...orgFilter, openToWork: true }, select: { id: true } });
       return users.map((u) => u.id);
     }
   }
@@ -49,10 +50,11 @@ export interface ComposeInput {
   title: string;
   content: string;
   channels: ("in_app" | "email")[];
+  organizationId?: string | null;
 }
 
 export async function composeToSegment(input: ComposeInput) {
-  const userIds = await resolveSegmentUserIds(input.segment);
+  const userIds = await resolveSegmentUserIds(input.segment, input.organizationId);
 
   if (input.channels.includes("in_app")) {
     await prisma.notification.createMany({

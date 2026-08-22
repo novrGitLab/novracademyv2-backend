@@ -9,9 +9,7 @@ import cors from "cors";
 import express from "express";
 import { Prisma, PrismaClientKnownRequestError } from "@novr/db";
 import { ApiError } from "./lib/errors";
-// Side-effect imports: starts the background workers in this same process.
-import "./queues/certificateWorker";
-import "./queues/emailWorker";
+
 import alumniRouter from "./routes/alumni";
 import authRouter from "./routes/auth";
 import analyticsRouter from "./routes/analytics";
@@ -20,13 +18,16 @@ import badgesRouter from "./routes/badges";
 import bulkRouter from "./routes/bulk";
 import certificatesRouter from "./routes/certificates";
 import cohortsRouter from "./routes/cohorts";
+import complianceRouter from "./routes/compliance";
 import coursesRouter from "./routes/courses";
 import eventsRouter from "./routes/events";
 import groupsRouter from "./routes/groups";
 import jobsRouter from "./routes/jobs";
+import meRouter from "./routes/me";
 import mentorsRouter from "./routes/mentors";
 import messagesRouter from "./routes/messages";
 import notificationsRouter from "./routes/notifications";
+import organizationsRouter from "./routes/organizations";
 import postsRouter from "./routes/posts";
 import reportsRouter from "./routes/reports";
 import usersRouter from "./routes/users";
@@ -57,17 +58,21 @@ app.get("/health", (_req, res) =>
 // they're mounted before the global JSON parser.
 app.use("/webhooks", webhooksRouter);
 
-app.use(express.json());
+// JSON parser with a raised limit so uploaded image data URLs (course
+// thumbnails, org logos) fit in the request body.
+app.use(express.json({ limit: "10mb" }));
 
 app.use("/auth", authRouter);
 app.use("/users", usersRouter);
 app.use("/courses", coursesRouter);
 app.use("/cohorts", cohortsRouter);
+app.use("/compliance", complianceRouter);
 app.use("/certificates", certificatesRouter);
 app.use("/alumni", alumniRouter);
 app.use("/groups", groupsRouter);
 app.use("/posts", postsRouter);
 app.use("/messages", messagesRouter);
+app.use("/me", meRouter);
 app.use("/mentors", mentorsRouter);
 app.use("/jobs", jobsRouter);
 app.use("/events", eventsRouter);
@@ -76,6 +81,7 @@ app.use("/reports", reportsRouter);
 app.use("/bulk", bulkRouter);
 app.use("/badges", badgesRouter);
 app.use("/notifications", notificationsRouter);
+app.use("/organizations", organizationsRouter);
 app.use("/campaigns", campaignsRouter);
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

@@ -56,9 +56,12 @@ export async function bulkArchiveCourses(courseIds: string[]) {
   return result.count;
 }
 
-export async function getUsersForExport(userIds?: string[]) {
+export async function getUsersForExport(userIds?: string[], organizationId?: string | null) {
+  const where: Record<string, unknown> = {};
+  if (userIds) where.id = { in: userIds };
+  if (organizationId) where.organizationId = organizationId;
   return prisma.user.findMany({
-    where: userIds ? { id: { in: userIds } } : undefined,
+    where,
     select: {
       id: true,
       name: true,
