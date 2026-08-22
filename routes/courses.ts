@@ -62,7 +62,11 @@ router.post("/", requireRole(...ADMIN_ROLES), async (req, res) => {
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.flatten() });
   }
-  const course = await courseService.createCourse({ ...parsed.data, createdById: req.user!.id });
+  const course = await courseService.createCourse({
+    ...parsed.data,
+    createdById: req.user!.id,
+    tenantId: req.user!.tenantId,
+  });
   res.status(201).json(course);
 });
 

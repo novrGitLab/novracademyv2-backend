@@ -1,14 +1,13 @@
 import { Router } from "express";
 import { z } from "zod";
+import { ADMIN_ROLES, UserRole } from "@novr/types";
 import { prisma } from "@novr/db";
+import { authenticate, requireRole } from "../middleware/auth";
 import * as gophish from "../services/gophishService";
 
-// TODO: Re-enable auth once NEXTAUTH_SECRET is properly synced
-// import { authenticate, requireRole } from "../middleware/auth";
-// import { ADMIN_ROLES } from "@novr/types";
-// router.use(authenticate, requireRole(...ADMIN_ROLES));
-
 const router = Router();
+
+router.use(authenticate, requireRole(...ADMIN_ROLES));
 
 const createCampaignSchema = z.object({
   name: z.string().min(1),
@@ -107,6 +106,7 @@ router.post("/", async (req, res) => {
         launchedAt: new Date(),
         templateHtml,
         landingPageHtml,
+        tenantId: req.user!.tenantId,
       },
     });
 
@@ -125,9 +125,13 @@ router.post("/", async (req, res) => {
   }
 });
 
-// GET /campaigns — list all campaigns
-router.get("/", async (_req, res) => {
+// GET /campaigns — list all campaigns. Super Admin sees every tenant's
+// campaigns; a tenant admin only sees their own tenant's (plus any
+// campaign created before multi-tenancy, which has no tenantId).
+router.get("/", async (req, res) => {
+  const isSuperAdmin = req.user!.role === UserRole.SUPER_ADMIN;
   const campaigns = await prisma.campaign.findMany({
+    where: isSuperAdmin ? undefined : { OR: [{ tenantId: req.user!.tenantId }, { tenantId: null }] },
     orderBy: { createdAt: "desc" },
     include: { _count: { select: { campaignResults: true } } },
   });

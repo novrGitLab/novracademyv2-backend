@@ -52,7 +52,7 @@ async function resolveUserFromRequest(req: Request): Promise<AuthUser | null> {
 
     const user = await prisma.user.findUnique({
       where: { id: payload.sub },
-      select: { id: true, email: true, name: true, role: true, memberType: true, status: true },
+      select: { id: true, email: true, name: true, role: true, memberType: true, status: true, tenantId: true },
     });
 
     if (!user || user.status !== UserStatus.ACTIVE) {

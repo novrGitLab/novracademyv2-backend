@@ -43,6 +43,7 @@ export interface CreateCohortInput {
   name: string;
   year?: number;
   description?: string;
+  tenantId?: string | null;
 }
 
 export async function createCohort(input: CreateCohortInput) {

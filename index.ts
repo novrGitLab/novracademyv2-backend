@@ -9,6 +9,7 @@ import cors from "cors";
 import express from "express";
 import { Prisma, PrismaClientKnownRequestError } from "@novr/db";
 import { ApiError } from "./lib/errors";
+import { resolveTenant } from "./middleware/tenant";
 // Side-effect imports: starts the background workers in this same process.
 import "./queues/certificateWorker";
 import "./queues/emailWorker";
@@ -20,6 +21,7 @@ import badgesRouter from "./routes/badges";
 import bulkRouter from "./routes/bulk";
 import certificatesRouter from "./routes/certificates";
 import cohortsRouter from "./routes/cohorts";
+import complianceRouter from "./routes/compliance";
 import coursesRouter from "./routes/courses";
 import eventsRouter from "./routes/events";
 import groupsRouter from "./routes/groups";
@@ -29,6 +31,7 @@ import messagesRouter from "./routes/messages";
 import notificationsRouter from "./routes/notifications";
 import postsRouter from "./routes/posts";
 import reportsRouter from "./routes/reports";
+import tenantsRouter from "./routes/tenants";
 import usersRouter from "./routes/users";
 import webhooksRouter from "./routes/webhooks";
 import { createSocketServer } from "./sockets";
@@ -48,6 +51,9 @@ app.use(
   })
 );
 app.use(cookieParser());
+// Resolves the tenant from the request's subdomain (e.g. acme.novracademy.com)
+// and attaches it to req.tenant. Never blocks the request — see middleware/tenant.ts.
+app.use(resolveTenant);
 
 app.get("/health", (_req, res) =>
   res.json({ status: "ok", timestamp: new Date().toISOString() })
@@ -77,6 +83,8 @@ app.use("/bulk", bulkRouter);
 app.use("/badges", badgesRouter);
 app.use("/notifications", notificationsRouter);
 app.use("/campaigns", campaignsRouter);
+app.use("/tenants", tenantsRouter);
+app.use("/compliance", complianceRouter);
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (err instanceof ApiError) {

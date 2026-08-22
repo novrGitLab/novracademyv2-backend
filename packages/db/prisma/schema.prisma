@@ -163,6 +163,33 @@ enum NotificationType {
 }
 
 // =========================================================================
+// Tenants (multi-tenancy)
+// =========================================================================
+
+model Tenant {
+  id             String   @id @default(cuid())
+  name           String
+  slug           String   @unique
+  plan           String   @default("Starter")
+  logoUrl        String?
+  primaryColor   String?
+  secondaryColor String?
+  accentColor    String?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  users              User[]
+  courses            Course[]
+  cohorts            Cohort[]
+  enrollments        Enrollment[]
+  campaigns          Campaign[]
+  compliancePolicies CompliancePolicy[]
+
+  @@index([slug])
+}
+
+// =========================================================================
 // Auth (NextAuth.js — Prisma adapter models)
 // =========================================================================
 
@@ -223,11 +250,14 @@ model User {
   openToWork         Boolean         @default(false)
   publicProfileSlug  String?         @unique
   managerId          String?
+  tenantId           String?
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
 
   manager       User?  @relation("ManagerTeam", fields: [managerId], references: [id])
   directReports User[] @relation("ManagerTeam")
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id])
 
   accounts Account[]
   sessions Session[]
@@ -268,6 +298,7 @@ model User {
 
   @@index([role])
   @@index([memberType])
+  @@index([tenantId])
 }
 
 // =========================================================================
@@ -321,20 +352,24 @@ model Course {
   allowForwardScrub Boolean      @default(false)
   defaultValidityDays Int?
   createdById       String?
+  tenantId          String?
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
 
-  createdBy User? @relation(fields: [createdById], references: [id])
+  createdBy User?   @relation(fields: [createdById], references: [id])
+  tenant    Tenant? @relation(fields: [tenantId], references: [id])
 
-  lessons          Lesson[]
-  enrollments      Enrollment[]
-  certificates     Certificate[]
-  payments         Payment[]
-  badges           Badge[]
-  groups           CommunityGroup[]
-  aiConversations  CourseAiConversation[]
+  lessons            Lesson[]
+  enrollments        Enrollment[]
+  certificates       Certificate[]
+  payments           Payment[]
+  badges             Badge[]
+  groups             CommunityGroup[]
+  aiConversations    CourseAiConversation[]
+  compliancePolicies CompliancePolicy[]
 
   @@index([status])
+  @@index([tenantId])
 }
 
 model CourseAiConversation {
@@ -451,6 +486,7 @@ model Enrollment {
   cohortId       String?
   assignedById   String?
   paymentId      String?           @unique
+  tenantId       String?
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
 
@@ -459,6 +495,7 @@ model Enrollment {
   cohort     Cohort? @relation(fields: [cohortId], references: [id])
   assignedBy User?   @relation("EnrollmentAssignedBy", fields: [assignedById], references: [id])
   payment    Payment? @relation(fields: [paymentId], references: [id])
+  tenant     Tenant? @relation(fields: [tenantId], references: [id])
 
   lessonProgress LessonProgress[]
   certificate    Certificate?
@@ -466,6 +503,7 @@ model Enrollment {
   @@index([userId, courseId])
   @@index([status])
   @@index([expiresAt])
+  @@index([tenantId])
 }
 
 model LessonProgress {
@@ -536,13 +574,18 @@ model Cohort {
   slug        String   @unique
   year        Int?
   description String?
+  tenantId    String?
   createdAt   DateTime @default(now())
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id])
 
   members       UserCohort[]
   enrollments   Enrollment[]
   groups        CommunityGroup[]
   posts         CommunityPost[]
   alumniRecords AlumniRecord[]
+
+  @@index([tenantId])
 }
 
 model UserCohort {
@@ -871,12 +914,15 @@ model Campaign {
   results            Json     @default("{}")
   templateHtml       String?
   landingPageHtml    String?
+  tenantId           String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
+  tenant          Tenant?          @relation(fields: [tenantId], references: [id])
   campaignResults CampaignResult[]
 
   @@index([status])
+  @@index([tenantId])
 }
 
 model CampaignResult {
@@ -896,4 +942,28 @@ model CampaignResult {
   @@index([userId])
   @@index([employeeEmail])
   @@index([gophishCampaignId])
+}
+
+// =========================================================================
+// Compliance tracking
+// =========================================================================
+
+// A CompliancePolicy says: "everyone with roleName in this tenant must
+// complete courseId by deadline." Completion status is derived by joining
+// against Enrollment (see complianceService.getPolicyStatus) rather than
+// stored redundantly here.
+model CompliancePolicy {
+  id        String    @id @default(cuid())
+  tenantId  String
+  name      String
+  courseId  String
+  roleName  String
+  deadline  DateTime?
+  createdAt DateTime  @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id])
+
+  @@index([tenantId])
+  @@index([courseId])
 }
