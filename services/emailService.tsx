@@ -1,5 +1,6 @@
 import type { ReactElement } from "react";
-import { Resend } from "resend";
+import nodemailer from "nodemailer";
+import { renderToStaticMarkup } from "react-dom/server";
 import { AlumniInviteEmail } from "../emails/AlumniInviteEmail";
 import { AdminWelcomeEmail } from "../emails/AdminWelcomeEmail";
 import { CertificateIssuedEmail } from "../emails/CertificateIssuedEmail";
@@ -11,24 +12,63 @@ import { JobAlertEmail } from "../emails/JobAlertEmail";
 import { LiveClassReminderEmail } from "../emails/LiveClassReminderEmail";
 import { QuizResultEmail } from "../emails/QuizResultEmail";
 
-const FROM = process.env.EMAIL_FROM ?? "hello@novracademy.com";
+const FROM = process.env.EMAIL_FROM ?? "Novr Academy <novracademy@gmail.com>";
 
-let resendClient: Resend | null | undefined;
+let transporter: nodemailer.Transporter | null | undefined;
 
-function getResendClient(): Resend | null {
-  if (resendClient === undefined) {
-    resendClient = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+const SMTP_SERVICES: Record<string, { host: string; port: number }> = {
+  gmail: { host: "smtp.gmail.com", port: 465 },
+  zoho: { host: "smtp.zoho.com", port: 465 },
+  "zohomail": { host: "smtp.zoho.com", port: 465 },
+  outlook: { host: "smtp-mail.outlook.com", port: 587 },
+};
+
+function getTransporter(): nodemailer.Transporter | null {
+  if (transporter !== undefined) return transporter;
+
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+
+  if (!user || !pass) {
+    transporter = null;
+    return transporter;
   }
-  return resendClient;
+
+  const serviceName = (process.env.SMTP_SERVICE ?? "gmail").toLowerCase();
+  const serviceConfig = SMTP_SERVICES[serviceName];
+
+  if (serviceConfig) {
+    transporter = nodemailer.createTransport({
+      host: serviceConfig.host,
+      port: serviceConfig.port,
+      secure: serviceConfig.port === 465,
+      auth: { user, pass },
+    });
+  } else {
+    transporter = nodemailer.createTransport({
+      service: serviceName,
+      auth: { user, pass },
+    });
+  }
+
+  return transporter;
 }
 
 async function sendEmail(to: string, subject: string, react: ReactElement) {
-  const client = getResendClient();
-  if (!client) {
-    console.warn(`Skipping email "${subject}" to ${to} — RESEND_API_KEY is not configured.`);
+  const transport = getTransporter();
+  if (!transport) {
+    console.warn(`Skipping email "${subject}" to ${to} — SMTP not configured (set SMTP_USER and SMTP_PASS in .env).`);
     return;
   }
-  await client.emails.send({ from: FROM, to, subject, react });
+
+  const html = renderToStaticMarkup(react);
+
+  await transport.sendMail({
+    from: FROM,
+    to,
+    subject,
+    html,
+  });
 }
 
 export async function sendEnrollmentConfirmedEmail(params: {

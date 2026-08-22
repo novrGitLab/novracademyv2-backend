@@ -7,7 +7,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // 24. Overview home
 // ---------------------------------------------------------------------
 
-export async function getOverviewMetrics() {
+export async function getOverviewMetrics(organizationId?: string | null) {
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const startOfWeek = new Date(startOfToday.getTime() - 7 * DAY_MS);
@@ -15,6 +15,8 @@ export async function getOverviewMetrics() {
   const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const in30Days = new Date(now.getTime() + 30 * DAY_MS);
   const last24h = new Date(now.getTime() - DAY_MS);
+
+  const orgFilter = organizationId ? { organizationId } : {};
 
   const [
     membersByType,
@@ -28,23 +30,23 @@ export async function getOverviewMetrics() {
     rsvpsLast24h,
     expiringEnrollments,
   ] = await Promise.all([
-    prisma.user.groupBy({ by: ["memberType"], _count: true }),
-    prisma.enrollment.count({ where: { enrolledAt: { gte: startOfToday } } }),
-    prisma.enrollment.count({ where: { enrolledAt: { gte: startOfWeek } } }),
-    prisma.enrollment.count({ where: { enrolledAt: { gte: startOfMonth } } }),
+    prisma.user.groupBy({ by: ["memberType"], where: orgFilter, _count: true }),
+    prisma.enrollment.count({ where: { enrolledAt: { gte: startOfToday }, course: orgFilter } }),
+    prisma.enrollment.count({ where: { enrolledAt: { gte: startOfWeek }, course: orgFilter } }),
+    prisma.enrollment.count({ where: { enrolledAt: { gte: startOfMonth }, course: orgFilter } }),
     prisma.payment.aggregate({
-      where: { status: PaymentStatus.SUCCEEDED, createdAt: { gte: startOfMonth } },
+      where: { status: PaymentStatus.SUCCEEDED, createdAt: { gte: startOfMonth }, course: orgFilter },
       _sum: { amountCents: true },
     }),
     prisma.payment.aggregate({
-      where: { status: PaymentStatus.SUCCEEDED, createdAt: { gte: startOfLastMonth, lt: startOfMonth } },
+      where: { status: PaymentStatus.SUCCEEDED, createdAt: { gte: startOfLastMonth, lt: startOfMonth }, course: orgFilter },
       _sum: { amountCents: true },
     }),
     prisma.communityPost.count({ where: { createdAt: { gte: last24h } } }),
     prisma.message.count({ where: { createdAt: { gte: last24h } } }),
     prisma.eventRsvp.count({ where: { createdAt: { gte: last24h } } }),
     prisma.enrollment.count({
-      where: { status: EnrollmentStatus.ACTIVE, expiresAt: { gte: now, lte: in30Days } },
+      where: { status: EnrollmentStatus.ACTIVE, expiresAt: { gte: now, lte: in30Days }, course: orgFilter },
     }),
   ]);
 
@@ -61,9 +63,10 @@ export async function getOverviewMetrics() {
 // 25. LMS analytics
 // ---------------------------------------------------------------------
 
-export async function getCourseHealth() {
+export async function getCourseHealth(organizationId?: string | null) {
+  const orgFilter = organizationId ? { organizationId } : {};
   const courses = await prisma.course.findMany({
-    where: { status: "PUBLISHED" },
+    where: { status: "PUBLISHED", ...orgFilter },
     select: {
       id: true,
       title: true,
@@ -124,8 +127,9 @@ export async function getDropOffAnalysis(courseId: string) {
   }));
 }
 
-export async function getCohortPerformance() {
-  const cohorts = await prisma.cohort.findMany({ include: { members: true } });
+export async function getCohortPerformance(organizationId?: string | null) {
+  const orgFilter = organizationId ? { organizationId } : {};
+  const cohorts = await prisma.cohort.findMany({ where: orgFilter, include: { members: true } });
   return Promise.all(
     cohorts.map(async (cohort) => {
       const userIds = cohort.members.map((m) => m.userId);

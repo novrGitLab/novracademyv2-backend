@@ -1,14 +1,26 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "@novr/db";
+import { UserRole, ADMIN_ROLES } from "@novr/types";
+import { authenticate, requireRole } from "../middleware/auth";
 import * as gophish from "../services/gophishService";
 
-// TODO: Re-enable auth once NEXTAUTH_SECRET is properly synced
-// import { authenticate, requireRole } from "../middleware/auth";
-// import { ADMIN_ROLES } from "@novr/types";
-// router.use(authenticate, requireRole(...ADMIN_ROLES));
-
 const router = Router();
+router.use(authenticate);
+
+async function canManageOrg(userId: string, orgId: string, role: string): Promise<boolean> {
+  if (role === UserRole.SUPER_ADMIN) return true;
+  if (!ADMIN_ROLES.includes(role as any)) return false;
+  const member = await prisma.user.findFirst({ where: { id: userId, organizationId: orgId } });
+  return !!member;
+}
+
+function getOrgId(req: any): string | null {
+  if (req.user.role === UserRole.SUPER_ADMIN) {
+    return (req.query.organizationId as string) || req.user.organizationId;
+  }
+  return req.user.organizationId;
+}
 
 const createCampaignSchema = z.object({
   name: z.string().min(1),
@@ -26,7 +38,14 @@ const createCampaignSchema = z.object({
 });
 
 // POST /campaigns — launch a phishing campaign
-router.post("/", async (req, res) => {
+router.post("/", requireRole(...ADMIN_ROLES), async (req, res) => {
+  const orgId = getOrgId(req);
+  if (!orgId) return res.status(400).json({ error: "No organization associated with your account" });
+
+  if (!(await canManageOrg(req.user!.id, orgId, req.user!.role))) {
+    return res.status(403).json({ error: "Insufficient permissions" });
+  }
+
   const parsed = createCampaignSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.flatten() });
@@ -36,35 +55,16 @@ router.post("/", async (req, res) => {
   const campaignUrl = process.env.GOPHISH_CAMPAIGN_URL ?? "http://172.236.25.61:3005";
   const timestamp = Date.now();
 
-  // Single-tenant: every target must resolve to an existing User record.
-  // In development, unknown targets (e.g. the dev test accounts that bypass
-  // the DB on the frontend) are auto-provisioned as LEARNER rows so the
-  // launch flow works with any email while prototyping.
+  // Scope target lookup to organization users
   const targetEmails = employeeEmails.map((e) => e.email.toLowerCase());
-  const users = await prisma.user.findMany({ where: { email: { in: targetEmails } } });
+  const users = await prisma.user.findMany({ where: { email: { in: targetEmails }, organizationId: orgId } });
   const userByEmail = new Map(users.map((u) => [u.email.toLowerCase(), u]));
   const missing = targetEmails.filter((e) => !userByEmail.has(e));
   if (missing.length > 0) {
-    const isDev = !process.env.NODE_ENV || process.env.NODE_ENV === "development";
-    if (!isDev) {
-      return res.status(400).json({
-        error: "Unknown target emails (no matching User record)",
-        emails: missing,
-      });
-    }
-    await prisma.user.createMany({
-      data: missing.map((email) => ({
-        email,
-        name: email
-          .split("@")[0]
-          .replace(/[._-]+/g, " ")
-          .replace(/\b\w/g, (c) => c.toUpperCase()),
-        role: "LEARNER",
-      })),
-      skipDuplicates: true,
+    return res.status(400).json({
+      error: "Some target emails are not members of your organization",
+      emails: missing,
     });
-    const created = await prisma.user.findMany({ where: { email: { in: missing } } });
-    for (const u of created) userByEmail.set(u.email.toLowerCase(), u);
   }
   const targets = [...userByEmail.values()].map((u) => {
     const [first, ...rest] = (u.name ?? "").split(" ").filter(Boolean);
@@ -83,9 +83,19 @@ router.post("/", async (req, res) => {
   const groupName = `${name}-targets-${timestamp}`;
 
   try {
-    // 1. Create GoPhish resources sequentially (with logging)
+    // 1. Fetch org's sender config for phishing emails
+    const org = await prisma.organization.findUnique({
+      where: { id: orgId },
+      select: { senderName: true, senderEmail: true, name: true },
+    });
+    const senderDisplay = org?.senderName || org?.name || "Security Team";
+    const senderAddress = org?.senderEmail || process.env.GOPHISH_SMTP_FROM_ADDRESS || "security@novracademy.com";
+
+    // 2. Create GoPhish resources sequentially (with logging)
     console.log("GoPhish: Creating sending profile...");
-    const smtpRes = await gophish.createSendingProfile(smtpName);
+    const smtpRes = await gophish.createSendingProfile(smtpName, {
+      fromAddress: `${senderDisplay} <${senderAddress}>`,
+    });
     const smtpData = smtpRes.data?.data || smtpRes.data;
     console.log("GoPhish: SMTP created:", smtpData?.id);
 
@@ -123,6 +133,7 @@ router.post("/", async (req, res) => {
         gophishCampaignId: campaignData.id,
         name,
         status: "active",
+        organizationId: orgId,
         launchedAt: new Date(),
         templateHtml,
         landingPageHtml,
@@ -144,9 +155,12 @@ router.post("/", async (req, res) => {
   }
 });
 
-// GET /campaigns — list all campaigns
-router.get("/", async (_req, res) => {
+// GET /campaigns — list campaigns scoped to organization
+router.get("/", requireRole(...ADMIN_ROLES), async (req, res) => {
+  const orgId = getOrgId(req);
+  const where = orgId ? { organizationId: orgId } : {};
   const campaigns = await prisma.campaign.findMany({
+    where,
     orderBy: { createdAt: "desc" },
     include: { _count: { select: { campaignResults: true } } },
   });
@@ -154,7 +168,7 @@ router.get("/", async (_req, res) => {
 });
 
 // GET /campaigns/:id — get single campaign (accepts DB id or GoPhish id)
-router.get("/:id", async (req, res) => {
+router.get("/:id", requireRole(...ADMIN_ROLES), async (req, res) => {
   const id = req.params.id;
   const isNumeric = /^\d+$/.test(id);
   const campaign = await prisma.campaign.findFirst({
@@ -162,6 +176,12 @@ router.get("/:id", async (req, res) => {
     include: { campaignResults: true },
   });
   if (!campaign) return res.status(404).json({ error: "Campaign not found" });
+
+  const orgId = getOrgId(req);
+  if (orgId && campaign.organizationId !== orgId) {
+    return res.status(403).json({ error: "Insufficient permissions" });
+  }
+
   res.json(campaign);
 });
 
@@ -264,7 +284,7 @@ router.get("/:id/results", async (req, res) => {
 });
 
 // DELETE /campaigns/:id — delete campaign (accepts DB id or GoPhish id)
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", requireRole(...ADMIN_ROLES), async (req, res) => {
   const id = req.params.id;
   const isNumeric = /^\d+$/.test(id);
 
@@ -272,6 +292,11 @@ router.delete("/:id", async (req, res) => {
     where: isNumeric ? { gophishCampaignId: parseInt(id) } : { id },
   });
   if (!campaign) return res.status(404).json({ error: "Campaign not found" });
+
+  const orgId = getOrgId(req);
+  if (orgId && campaign.organizationId !== orgId) {
+    return res.status(403).json({ error: "Insufficient permissions" });
+  }
 
   if (campaign.gophishCampaignId) {
     try {

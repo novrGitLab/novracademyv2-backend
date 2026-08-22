@@ -22,8 +22,10 @@ async function uniqueSlug(name: string, excludeId?: string): Promise<string> {
   }
 }
 
-export async function listCohorts() {
+export async function listCohorts(organizationId?: string | null) {
+  const where = organizationId !== undefined ? { organizationId } : {};
   return prisma.cohort.findMany({
+    where,
     orderBy: { createdAt: "desc" },
     include: { _count: { select: { members: true, alumniRecords: true } } },
   });

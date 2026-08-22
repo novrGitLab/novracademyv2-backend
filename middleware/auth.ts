@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { decode } from "next-auth/jwt";
+import { jwtVerify } from "jose";
 import { prisma } from "@novr/db";
 import type { AuthUser, UserRole } from "@novr/types";
 import { UserStatus } from "@novr/types";
@@ -44,7 +45,24 @@ async function resolveUserFromRequest(req: Request): Promise<AuthUser | null> {
   }
 
   try {
-    const payload = await decode({ token, secret });
+    // Try NextAuth JWE decode first (frontend session tokens), then fall back
+    // to standard JWS verification (tokens from /auth/login).
+    let payload: Record<string, unknown> | null = null;
+    try {
+      payload = await decode({ token, secret }) as Record<string, unknown> | null;
+    } catch {
+      // Not a JWE token — try JWS verification via jose
+      try {
+        const { payload: jwsPayload } = await jwtVerify(
+          token,
+          new TextEncoder().encode(secret),
+          { algorithms: ["HS256"] },
+        );
+        payload = jwsPayload as Record<string, unknown>;
+      } catch {
+        // Neither JWE nor JWS — invalid token
+      }
+    }
     if (!payload?.sub) {
       console.log("Auth: token decoded but no sub claim");
       return null;
@@ -70,7 +88,7 @@ async function resolveUserFromRequest(req: Request): Promise<AuthUser | null> {
 
     const user = await prisma.user.findUnique({
       where: { id: payload.sub },
-      select: { id: true, email: true, name: true, role: true, memberType: true, status: true },
+      select: { id: true, email: true, name: true, role: true, memberType: true, status: true, organizationId: true },
     });
 
     if (!user || user.status !== UserStatus.ACTIVE) {

@@ -25,6 +25,7 @@ async function uniqueSlug(title: string, excludeId?: string): Promise<string> {
 export interface ListCoursesParams {
   status?: CourseStatus;
   search?: string;
+  organizationId?: string | null;
   page?: number;
   pageSize?: number;
 }
@@ -35,6 +36,7 @@ export async function listCourses(params: ListCoursesParams) {
 
   const where = {
     status: params.status,
+    ...(params.organizationId !== undefined && { organizationId: params.organizationId }),
     ...(params.search
       ? { title: { contains: params.search, mode: "insensitive" as const } }
       : {}),

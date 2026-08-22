@@ -189,4 +189,5 @@ export interface AuthUser {
   role: UserRole;
   memberType: MemberType;
   status: UserStatus;
+  organizationId?: string | null;
 }

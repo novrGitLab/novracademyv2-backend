@@ -1,8 +1,10 @@
 import { prisma } from "@novr/db";
 import { PaymentStatus } from "@novr/types";
 
-export async function getQuizResultsReport() {
+export async function getQuizResultsReport(organizationId?: string | null) {
+  const where = organizationId ? { quiz: { lesson: { course: { organizationId } } } } : {};
   const attempts = await prisma.quizAttempt.findMany({
+    where,
     include: {
       user: { select: { name: true, email: true } },
       quiz: { include: { lesson: { include: { course: { select: { title: true } } } } } },
@@ -21,9 +23,10 @@ export async function getQuizResultsReport() {
   }));
 }
 
-export async function getCourseCompletionReport() {
+export async function getCourseCompletionReport(organizationId?: string | null) {
+  const orgFilter = organizationId ? { course: { organizationId } } : {};
   const enrollments = await prisma.enrollment.findMany({
-    where: { completedAt: { not: null } },
+    where: { completedAt: { not: null }, ...orgFilter },
     include: {
       user: { select: { name: true, email: true } },
       course: { select: { title: true } },
@@ -41,8 +44,10 @@ export async function getCourseCompletionReport() {
   }));
 }
 
-export async function getEnrollmentReport() {
+export async function getEnrollmentReport(organizationId?: string | null) {
+  const orgFilter = organizationId ? { course: { organizationId } } : {};
   const enrollments = await prisma.enrollment.findMany({
+    where: orgFilter,
     include: { user: { select: { name: true, email: true } }, course: { select: { title: true } } },
     orderBy: { enrolledAt: "desc" },
   });
@@ -92,9 +97,10 @@ export async function getLearnerProgressReport(userId: string) {
     }));
 }
 
-export async function getRevenueReport() {
+export async function getRevenueReport(organizationId?: string | null) {
+  const orgFilter = organizationId ? { course: { organizationId } } : {};
   const payments = await prisma.payment.findMany({
-    where: { status: PaymentStatus.SUCCEEDED },
+    where: { status: PaymentStatus.SUCCEEDED, ...orgFilter },
     include: { user: { select: { name: true, email: true } }, course: { select: { title: true } } },
     orderBy: { createdAt: "desc" },
   });

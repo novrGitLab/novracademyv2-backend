@@ -9,9 +9,7 @@ import cors from "cors";
 import express from "express";
 import { Prisma, PrismaClientKnownRequestError } from "@novr/db";
 import { ApiError } from "./lib/errors";
-// Side-effect imports: starts the background workers in this same process.
-import "./queues/certificateWorker";
-import "./queues/emailWorker";
+
 import alumniRouter from "./routes/alumni";
 import authRouter from "./routes/auth";
 import analyticsRouter from "./routes/analytics";
@@ -20,6 +18,7 @@ import badgesRouter from "./routes/badges";
 import bulkRouter from "./routes/bulk";
 import certificatesRouter from "./routes/certificates";
 import cohortsRouter from "./routes/cohorts";
+import complianceRouter from "./routes/compliance";
 import coursesRouter from "./routes/courses";
 import eventsRouter from "./routes/events";
 import groupsRouter from "./routes/groups";
@@ -67,6 +66,7 @@ app.use("/auth", authRouter);
 app.use("/users", usersRouter);
 app.use("/courses", coursesRouter);
 app.use("/cohorts", cohortsRouter);
+app.use("/compliance", complianceRouter);
 app.use("/certificates", certificatesRouter);
 app.use("/alumni", alumniRouter);
 app.use("/groups", groupsRouter);

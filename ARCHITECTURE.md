@@ -20,11 +20,8 @@ Uses Prisma ORM with PostgreSQL (Supabase):
 
 ## Background Jobs
 
-BullMQ queues for async operations:
-- Email queue (Resend)
-- Certificate queue (PDF generation)
-
-Requires Redis (`REDIS_URL`). If not configured, queues gracefully skip.
+Emails and certificate generation are handled synchronously via SMTP (Nodemailer).
+Delayed notifications (expiry warnings, reminders) use `setTimeout` with unref'd timers.
 
 ## Real-time
 
