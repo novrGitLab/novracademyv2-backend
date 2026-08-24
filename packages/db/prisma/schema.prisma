@@ -271,6 +271,9 @@ model User {
   aiConversations   CourseAiConversation[]
   campaignResults   CampaignResult[]
 
+  labSessions LabSession[]
+  labSolves   LabSolve[]
+
   @@index([role])
   @@index([memberType])
   @@index([organizationId])
@@ -304,6 +307,7 @@ model Organization {
   campaigns            Campaign[]
   complianceSetting    ComplianceSetting?
   complianceAssignments ComplianceAssignment[]
+  labs                 Lab[]
 
   @@index([plan])
 }
@@ -974,4 +978,62 @@ model ComplianceAssignment {
 
   @@unique([courseId, organizationId])
   @@index([organizationId])
+}
+
+// =========================================================================
+// Labs (CTF-Style Challenges)
+// =========================================================================
+
+model Lab {
+  id              String   @id @default(cuid())
+  organizationId  String?
+  labTemplateId   String
+  name            String
+  category        String
+  description     String
+  points          Int      @default(50)
+  flag            String
+  createdAt       DateTime @default(now())
+
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  sessions     LabSession[]
+  solves       LabSolve[]
+
+  @@index([organizationId])
+  @@index([category])
+}
+
+model LabSession {
+  id             String    @id @default(cuid())
+  labId          String
+  userId         String
+  agentSessionId String
+  startedAt      DateTime  @default(now())
+  endedAt        DateTime?
+  status         String    @default("active")
+
+  lab   Lab  @relation(fields: [labId], references: [id])
+  user  User @relation(fields: [userId], references: [id])
+
+  solves LabSolve[]
+
+  @@index([labId])
+  @@index([userId])
+  @@index([status])
+}
+
+model LabSolve {
+  id           String   @id @default(cuid())
+  labId        String
+  userId       String
+  labSessionId String?
+  solvedAt     DateTime @default(now())
+
+  lab     Lab         @relation(fields: [labId], references: [id])
+  user    User        @relation(fields: [userId], references: [id])
+  session LabSession? @relation(fields: [labSessionId], references: [id])
+
+  @@unique([labId, userId])
+  @@index([userId])
+  @@index([labId])
 }

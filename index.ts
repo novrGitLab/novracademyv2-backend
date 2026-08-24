@@ -32,6 +32,8 @@ import postsRouter from "./routes/posts";
 import reportsRouter from "./routes/reports";
 import usersRouter from "./routes/users";
 import webhooksRouter from "./routes/webhooks";
+import labsRouter from "./routes/labs";
+import { startLabSessionCleanup } from "./services/labSessionCleanup";
 import { createSocketServer } from "./sockets";
 
 const app = express();
@@ -83,6 +85,7 @@ app.use("/badges", badgesRouter);
 app.use("/notifications", notificationsRouter);
 app.use("/organizations", organizationsRouter);
 app.use("/campaigns", campaignsRouter);
+app.use("/labs", labsRouter);
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (err instanceof ApiError) {
@@ -97,6 +100,7 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
 
 const httpServer = createServer(app);
 createSocketServer(httpServer);
+startLabSessionCleanup();
 
 const port = Number(process.env.API_PORT ?? 4000);
 httpServer.listen(port, () => {
