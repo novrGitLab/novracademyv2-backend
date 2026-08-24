@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { MemberType, UserRole, UserStatus, ADMIN_ROLES } from "@novr/types";
 import { authenticate, requireRole } from "../middleware/auth";
+import * as assessmentService from "../services/assessmentService";
 import * as userService from "../services/userService";
 
 const router = Router();
@@ -110,6 +111,18 @@ router.patch("/:id", async (req, res) => {
 router.delete("/:id", requireRole(...ADMIN_ROLES), async (req, res) => {
   await userService.deleteUser(req.params.id);
   res.status(204).send();
+});
+
+// GET /users/:id/growth — self, or admins/managers. Baseline vs closing
+// assessment scores (see services/assessmentService.ts).
+router.get("/:id/growth", async (req, res) => {
+  const isSelf = req.user!.id === req.params.id;
+  const isPrivileged = [...ADMIN_ROLES, UserRole.MANAGER].includes(req.user!.role);
+  if (!isSelf && !isPrivileged) {
+    return res.status(403).json({ error: "Insufficient permissions" });
+  }
+  const growth = await assessmentService.getGrowthForUser(req.params.id);
+  res.json(growth);
 });
 
 export default router;

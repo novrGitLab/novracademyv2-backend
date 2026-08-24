@@ -88,6 +88,14 @@ router.delete("/:id", requireRole(...ADMIN_ROLES), async (req, res) => {
   res.status(204).send();
 });
 
+// POST /courses/:id/certificates/regenerate — admin only. Re-renders every
+// issued certificate for this course, e.g. after the template or the
+// tenant's branding (logo/color) changes.
+router.post("/:id/certificates/regenerate", requireRole(...ADMIN_ROLES), async (req, res) => {
+  const result = await certificateService.regenerateCertificatesForCourse(req.params.id);
+  res.json(result);
+});
+
 // GET /courses/:id/progress — per-lesson unlock/completion state for the
 // current user's active enrollment.
 router.get("/:id/progress", async (req, res) => {

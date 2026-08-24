@@ -2,6 +2,7 @@ import { Worker } from "bullmq";
 import { prisma } from "@novr/db";
 import { EnrollmentStatus } from "@novr/types";
 import * as emailService from "../services/emailService";
+import * as marketingCampaignService from "../services/marketingCampaignService";
 import { redisConnectionOptions } from "./connection";
 import type { EmailJobData } from "./emailQueue";
 
@@ -168,6 +169,11 @@ async function processEmailJob(job: { data: unknown }) {
             })
           )
         );
+        break;
+      }
+
+      case "marketing_campaign_send": {
+        await marketingCampaignService.deliverCampaignEmails(data.campaignId);
         break;
       }
     }

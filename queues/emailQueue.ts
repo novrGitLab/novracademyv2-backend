@@ -10,7 +10,8 @@ export type EmailJobData =
   | { type: "alumni_invite"; alumniRecordId: string }
   | { type: "job_alert"; jobListingId: string }
   | { type: "event_reminder"; eventId: string; hoursBefore: number }
-  | { type: "segment_notification"; userIds: string[]; title: string; content: string };
+  | { type: "segment_notification"; userIds: string[]; title: string; content: string }
+  | { type: "marketing_campaign_send"; campaignId: string };
 
 export const emailQueue = redisConnectionOptions
   ? new Queue("emails", { connection: redisConnectionOptions })
@@ -51,6 +52,9 @@ export const enqueueJobAlertEmails = (jobListingId: string) => enqueue({ type: "
 
 export const enqueueSegmentNotificationEmail = (userIds: string[], title: string, content: string) =>
   enqueue({ type: "segment_notification", userIds, title, content });
+
+export const enqueueMarketingCampaignSend = (campaignId: string) =>
+  enqueue({ type: "marketing_campaign_send", campaignId });
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MS_PER_HOUR = 60 * 60 * 1000;

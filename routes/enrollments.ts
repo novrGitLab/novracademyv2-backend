@@ -3,8 +3,10 @@ import type { Request } from "express";
 import { z } from "zod";
 import { ADMIN_ROLES, MANAGER_ROLES, PaymentProvider, PaymentStatus } from "@novr/types";
 import { prisma } from "@novr/db";
+import { isDemoMode } from "../lib/demoMode";
 import { NotFoundError } from "../lib/errors";
 import { requireRole } from "../middleware/auth";
+import * as enrollmentCodeService from "../services/enrollmentCodeService";
 import * as enrollmentService from "../services/enrollmentService";
 import * as paystackService from "../services/paystackService";
 import * as stripeService from "../services/stripeService";
@@ -32,7 +34,7 @@ router.post("/free", async (req, res) => {
 // itself is only created once the provider's webhook confirms payment
 // (see routes/webhooks.ts) — never on the redirect back, which the client
 // could forge.
-const checkoutSchema = z.object({ provider: z.nativeEnum(PaymentProvider) });
+const checkoutSchema = z.object({ provider: z.nativeEnum(PaymentProvider), enrollmentCodeId: z.string().optional() });
 
 router.post("/checkout", async (req, res) => {
   const parsed = checkoutSchema.safeParse(req.body);
@@ -50,16 +52,43 @@ router.post("/checkout", async (req, res) => {
     return res.status(400).json({ error: "This course is free — use /enroll/free instead" });
   }
 
+  // A PERCENTAGE/FIXED_AMOUNT enrollment code (from POST /enrollments/code)
+  // discounts the charge here. The code's usedCount is consumed now, at
+  // checkout creation — not at redemption — so an abandoned discounted
+  // checkout doesn't burn a use (see enrollmentCodeService.redeemCode).
+  let amountCents = course.priceCents;
+  if (parsed.data.enrollmentCodeId) {
+    const code = await enrollmentCodeService.getActiveCodeById(parsed.data.enrollmentCodeId);
+    if (!code || code.courseId !== courseId) {
+      return res.status(400).json({ error: "Invalid or expired enrollment code" });
+    }
+    amountCents = enrollmentCodeService.applyDiscount(course.priceCents, code.discountType, code.discountValue);
+    await enrollmentCodeService.consumeCodeUse(code.id);
+  }
+
   const payment = await prisma.payment.create({
     data: {
       userId: user.id,
       courseId,
-      amountCents: course.priceCents,
+      amountCents,
       currency: course.currency,
       provider: parsed.data.provider,
       status: PaymentStatus.PENDING,
     },
   });
+
+  // Demo mode: skip Stripe/Paystack entirely and auto-approve the
+  // enrollment right on checkout, same as a webhook confirming payment
+  // would — see lib/demoMode.ts.
+  if (isDemoMode()) {
+    await prisma.payment.update({ where: { id: payment.id }, data: { status: PaymentStatus.SUCCEEDED } });
+    const enrollment = await enrollmentService.activateEnrollmentFromPayment(payment.id);
+    return res.status(201).json({
+      checkoutUrl: `${APP_URL}/dashboard/learn/${courseId}?checkout=success`,
+      demoMode: true,
+      enrollment,
+    });
+  }
 
   const successUrl = `${APP_URL}/dashboard/learn/${courseId}?checkout=success`;
   const cancelUrl = `${APP_URL}/dashboard/learn/${courseId}?checkout=cancelled`;
@@ -68,7 +97,7 @@ router.post("/checkout", async (req, res) => {
     const session = await stripeService.createCheckoutSession({
       courseId,
       courseTitle: course.title,
-      priceCents: course.priceCents,
+      priceCents: amountCents,
       currency: course.currency,
       userId: user.id,
       userEmail: user.email,
@@ -84,7 +113,7 @@ router.post("/checkout", async (req, res) => {
 
   const transaction = await paystackService.initializeTransaction({
     email: user.email,
-    amountCents: course.priceCents,
+    amountCents,
     currency: course.currency,
     reference: payment.id,
     callbackUrl: successUrl,

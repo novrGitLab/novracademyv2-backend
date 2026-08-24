@@ -72,6 +72,7 @@ enum EnrollmentSource {
   ADMIN_ASSIGNED
   BULK
   COHORT
+  CODE
 }
 
 enum EnrollmentStatus {
@@ -162,6 +163,40 @@ enum NotificationType {
   GENERAL
 }
 
+enum NewsletterSource {
+  WEBSITE
+  IMPORT
+  MANUAL
+}
+
+enum NewsletterStatus {
+  ACTIVE
+  UNSUBSCRIBED
+}
+
+enum MarketingCampaignStatus {
+  DRAFT
+  SCHEDULED
+  SENT
+}
+
+enum AssessmentType {
+  BASELINE
+  MONTHLY
+  CLOSING
+}
+
+enum AssessmentScope {
+  UNIVERSAL
+  ORGANIZATION
+}
+
+enum DiscountType {
+  FREE
+  PERCENTAGE
+  FIXED_AMOUNT
+}
+
 // =========================================================================
 // Tenants (multi-tenancy)
 // =========================================================================
@@ -185,6 +220,7 @@ model Tenant {
   enrollments        Enrollment[]
   campaigns          Campaign[]
   compliancePolicies CompliancePolicy[]
+  assessments        Assessment[]
 
   @@index([slug])
 }
@@ -296,6 +332,13 @@ model User {
   aiConversations   CourseAiConversation[]
   campaignResults   CampaignResult[]
 
+  createdMarketingCampaigns MarketingCampaign[]  @relation("MarketingCampaignCreator")
+  createdAssessments        Assessment[]         @relation("AssessmentCreator")
+  assessmentAttempts        AssessmentAttempt[]
+  assessmentReleases        AssessmentRelease[]
+  growthRecord              GrowthRecord?
+  createdEnrollmentCodes    EnrollmentCode[]      @relation("EnrollmentCodeCreator")
+
   @@index([role])
   @@index([memberType])
   @@index([tenantId])
@@ -367,6 +410,7 @@ model Course {
   groups             CommunityGroup[]
   aiConversations    CourseAiConversation[]
   compliancePolicies CompliancePolicy[]
+  enrollmentCodes    EnrollmentCode[]
 
   @@index([status])
   @@index([tenantId])
@@ -584,6 +628,7 @@ model Cohort {
   groups        CommunityGroup[]
   posts         CommunityPost[]
   alumniRecords AlumniRecord[]
+  assessmentReleases AssessmentRelease[]
 
   @@index([tenantId])
 }
@@ -965,5 +1010,170 @@ model CompliancePolicy {
   course Course @relation(fields: [courseId], references: [id])
 
   @@index([tenantId])
+  @@index([courseId])
+}
+
+// =========================================================================
+// Newsletter / marketing campaigns
+// =========================================================================
+
+model NewsletterSubscriber {
+  id               String            @id @default(cuid())
+  email            String            @unique
+  firstName        String?
+  lastName         String?
+  source           NewsletterSource  @default(WEBSITE)
+  status           NewsletterStatus  @default(ACTIVE)
+  unsubscribeToken String            @unique @default(cuid())
+  subscribedAt     DateTime          @default(now())
+  unsubscribedAt   DateTime?
+
+  @@index([status])
+  @@index([email])
+}
+
+model MarketingCampaign {
+  id             String                   @id @default(cuid())
+  title          String
+  subject        String
+  bodyHtml       String                   @db.Text
+  status         MarketingCampaignStatus  @default(DRAFT)
+  scheduledAt    DateTime?
+  sentAt         DateTime?
+  recipientCount Int                      @default(0)
+  createdById    String
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
+
+  createdBy User @relation("MarketingCampaignCreator", fields: [createdById], references: [id])
+
+  @@index([status])
+}
+
+// =========================================================================
+// Assessments (baseline / monthly / closing)
+// =========================================================================
+
+// A single Assessment record covers both the BASELINE and CLOSING event for
+// a user: CLOSING reuses the BASELINE assessmentId (and thus its question
+// set) — see AssessmentAttempt.type for which pass a given attempt was.
+// MONTHLY assessments are their own fresh Assessment per month/year.
+model Assessment {
+  id             String          @id @default(cuid())
+  title          String
+  type           AssessmentType
+  scope          AssessmentScope @default(UNIVERSAL)
+  organizationId String?
+  scheduledFor   DateTime?
+  month          Int?
+  year           Int?
+  createdById    String
+  createdAt      DateTime        @default(now())
+  isActive       Boolean         @default(true)
+
+  organization Tenant? @relation(fields: [organizationId], references: [id])
+  createdBy    User    @relation("AssessmentCreator", fields: [createdById], references: [id])
+
+  questions AssessmentQuestion[]
+  attempts  AssessmentAttempt[]
+  releases  AssessmentRelease[]
+
+  @@index([type])
+  @@index([organizationId])
+  @@index([month, year])
+}
+
+// Governs when a CLOSING attempt is allowed on a BASELINE assessment — an
+// admin must explicitly release it, either to one user or to a whole cohort.
+model AssessmentRelease {
+  id           String   @id @default(cuid())
+  assessmentId String
+  userId       String?
+  cohortId     String?
+  releasedAt   DateTime @default(now())
+
+  assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  user       User?      @relation(fields: [userId], references: [id])
+  cohort     Cohort?    @relation(fields: [cohortId], references: [id])
+
+  @@index([assessmentId])
+  @@index([userId])
+  @@index([cohortId])
+}
+
+model AssessmentQuestion {
+  id            String       @id @default(cuid())
+  assessmentId  String
+  prompt        String
+  type          QuestionType
+  options       Json?
+  correctAnswer Json
+  points        Int          @default(1)
+  order         Int          @default(0)
+
+  assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  @@index([assessmentId])
+}
+
+// One row per (user, assessment, type) — the unique constraint is what
+// enforces "BASELINE/CLOSING can only be taken once", since CLOSING shares
+// the BASELINE assessment's id but has its own `type`.
+model AssessmentAttempt {
+  id           String         @id @default(cuid())
+  userId       String
+  assessmentId String
+  type         AssessmentType
+  score        Int
+  passed       Boolean        @default(false)
+  answers      Json
+  attemptedAt  DateTime       @default(now())
+
+  user       User       @relation(fields: [userId], references: [id])
+  assessment Assessment @relation(fields: [assessmentId], references: [id])
+
+  growthRecordAsBaseline GrowthRecord? @relation("BaselineAttempt")
+  growthRecordAsClosing  GrowthRecord? @relation("ClosingAttempt")
+
+  @@unique([userId, assessmentId, type])
+  @@index([userId])
+  @@index([assessmentId])
+}
+
+model GrowthRecord {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  baselineScore     Int
+  closingScore      Int
+  growthRate        Int
+  baselineAttemptId String   @unique
+  closingAttemptId  String   @unique
+  createdAt         DateTime @default(now())
+
+  user            User               @relation(fields: [userId], references: [id])
+  baselineAttempt AssessmentAttempt  @relation("BaselineAttempt", fields: [baselineAttemptId], references: [id])
+  closingAttempt  AssessmentAttempt  @relation("ClosingAttempt", fields: [closingAttemptId], references: [id])
+}
+
+// =========================================================================
+// Enrollment codes
+// =========================================================================
+
+model EnrollmentCode {
+  id            String       @id @default(cuid())
+  code          String       @unique
+  courseId      String
+  discountType  DiscountType @default(FREE)
+  discountValue Int          @default(0)
+  maxUses       Int          @default(1)
+  usedCount     Int          @default(0)
+  expiresAt     DateTime?
+  isActive      Boolean      @default(true)
+  createdById   String
+  createdAt     DateTime     @default(now())
+
+  course    Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  createdBy User   @relation("EnrollmentCodeCreator", fields: [createdById], references: [id])
+
   @@index([courseId])
 }

@@ -8,12 +8,14 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
 import { Prisma, PrismaClientKnownRequestError } from "@novr/db";
+import { isDemoMode } from "./lib/demoMode";
 import { ApiError } from "./lib/errors";
 import { resolveTenant } from "./middleware/tenant";
 // Side-effect imports: starts the background workers in this same process.
 import "./queues/certificateWorker";
 import "./queues/emailWorker";
 import alumniRouter from "./routes/alumni";
+import assessmentsRouter from "./routes/assessments";
 import authRouter from "./routes/auth";
 import analyticsRouter from "./routes/analytics";
 import campaignsRouter from "./routes/campaigns";
@@ -23,11 +25,15 @@ import certificatesRouter from "./routes/certificates";
 import cohortsRouter from "./routes/cohorts";
 import complianceRouter from "./routes/compliance";
 import coursesRouter from "./routes/courses";
+import enrollmentCodesRouter from "./routes/enrollmentCodes";
+import enrollmentRedeemRouter from "./routes/enrollmentRedeem";
 import eventsRouter from "./routes/events";
 import groupsRouter from "./routes/groups";
 import jobsRouter from "./routes/jobs";
+import marketingCampaignsRouter from "./routes/marketingCampaigns";
 import mentorsRouter from "./routes/mentors";
 import messagesRouter from "./routes/messages";
+import newsletterRouter from "./routes/newsletter";
 import notificationsRouter from "./routes/notifications";
 import postsRouter from "./routes/posts";
 import reportsRouter from "./routes/reports";
@@ -56,7 +62,7 @@ app.use(cookieParser());
 app.use(resolveTenant);
 
 app.get("/health", (_req, res) =>
-  res.json({ status: "ok", timestamp: new Date().toISOString() })
+  res.json({ status: "ok", timestamp: new Date().toISOString(), demoMode: isDemoMode() })
 );
 
 // Webhook routes need the raw request body for signature verification, so
@@ -85,6 +91,11 @@ app.use("/notifications", notificationsRouter);
 app.use("/campaigns", campaignsRouter);
 app.use("/tenants", tenantsRouter);
 app.use("/compliance", complianceRouter);
+app.use("/newsletter", newsletterRouter);
+app.use("/marketing-campaigns", marketingCampaignsRouter);
+app.use("/assessments", assessmentsRouter);
+app.use("/enrollment-codes", enrollmentCodesRouter);
+app.use("/enrollments", enrollmentRedeemRouter);
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (err instanceof ApiError) {

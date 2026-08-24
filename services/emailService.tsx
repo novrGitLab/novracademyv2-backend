@@ -30,6 +30,40 @@ async function sendEmail(to: string, subject: string, react: ReactElement) {
   await client.emails.send({ from: FROM, to, subject, react });
 }
 
+/**
+ * Sends a marketing campaign's raw HTML to a batch of recipients via
+ * Resend's batch API (max 100 per call, per Resend's limits — chunked here).
+ * Each recipient gets their own unsubscribe link appended to the body.
+ */
+export async function sendMarketingCampaignBatch(
+  recipients: { email: string; unsubscribeToken: string }[],
+  subject: string,
+  bodyHtml: string
+) {
+  const client = getResendClient();
+  if (!client) {
+    console.warn(`Skipping marketing campaign "${subject}" — RESEND_API_KEY is not configured.`);
+    return;
+  }
+
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  const BATCH_SIZE = 100;
+
+  for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
+    const chunk = recipients.slice(i, i + BATCH_SIZE);
+    await client.batch.send(
+      chunk.map((recipient) => ({
+        from: FROM,
+        to: recipient.email,
+        subject,
+        html: `${bodyHtml}<p style="margin-top:32px;font-size:12px;color:#6B7280">
+          <a href="${appUrl}/unsubscribe?token=${recipient.unsubscribeToken}">Unsubscribe</a>
+        </p>`,
+      }))
+    );
+  }
+}
+
 export async function sendEnrollmentConfirmedEmail(params: {
   to: string;
   learnerName: string;

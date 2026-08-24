@@ -3,7 +3,7 @@ import { EnrollmentSource, EnrollmentStatus } from "@novr/types";
 import { NotFoundError } from "../lib/errors";
 import { enqueueEnrollmentConfirmedEmail, enqueueExpiryWarnings } from "../queues/emailQueue";
 
-function computeExpiresAt(validityDays: number | null | undefined): Date | null {
+export function computeExpiresAt(validityDays: number | null | undefined): Date | null {
   if (!validityDays) return null;
   return new Date(Date.now() + validityDays * 24 * 60 * 60 * 1000);
 }

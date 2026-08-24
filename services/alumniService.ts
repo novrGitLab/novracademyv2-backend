@@ -108,6 +108,7 @@ export async function generateLegacyCertificatePdf(alumniRecordId: string) {
   if (!record || record.legacyCertPdfKey) return;
 
   const certUid = crypto.randomUUID();
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
   const pdfBuffer = await generateCertificatePdf({
     learnerName: record.fullName,
     courseTitle: record.courseName,
@@ -117,6 +118,7 @@ export async function generateLegacyCertificatePdf(alumniRecordId: string) {
       day: "numeric",
     }),
     certUid,
+    verificationUrl: `${appUrl}/certificates/${certUid}`,
   });
 
   const key = r2Service.certificateObjectKey(certUid);
