@@ -33,6 +33,7 @@ import reportsRouter from "./routes/reports";
 import usersRouter from "./routes/users";
 import webhooksRouter from "./routes/webhooks";
 import labsRouter from "./routes/labs";
+import itfRouter from "./routes/itf";
 import { startLabSessionCleanup } from "./services/labSessionCleanup";
 import { createSocketServer } from "./sockets";
 
@@ -86,6 +87,7 @@ app.use("/notifications", notificationsRouter);
 app.use("/organizations", organizationsRouter);
 app.use("/campaigns", campaignsRouter);
 app.use("/labs", labsRouter);
+app.use("/itf", itfRouter);
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (err instanceof ApiError) {

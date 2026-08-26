@@ -274,6 +274,8 @@ model User {
   labSessions LabSession[]
   labSolves   LabSolve[]
 
+  itfExportsGenerated ItfExport[] @relation("ItfExportGeneratedBy")
+
   @@index([role])
   @@index([memberType])
   @@index([organizationId])
@@ -301,6 +303,16 @@ model Organization {
   senderName      String?
   senderEmail     String?
 
+  // ITF compliance profile — captured once, populates every ITF export header
+  itfRcNumber              String?  // Corporate Affairs Commission RC number
+  itfRegistrationNumber    String?  // ITF employer liability/registration number
+  itfIndustrySector        String?  // Free text or controlled list (e.g. "Banking", "Oil & Gas")
+  itfAnnualPayrollBand     String?  // "Under ₦50m" | "₦50m – ₦500m" | "Over ₦500m"
+  itfEmployeeHeadcount     Int?     // Total workforce headcount as at 31 Dec
+  itfContactPhone          String?
+  itfContactEmail          String?
+  itfContactAddress        String?
+
   users                User[]
   courses              Course[]
   cohorts              Cohort[]
@@ -308,6 +320,7 @@ model Organization {
   complianceSetting    ComplianceSetting?
   complianceAssignments ComplianceAssignment[]
   labs                 Lab[]
+  itfExports           ItfExport[]
 
   @@index([plan])
 }
@@ -366,6 +379,13 @@ model Course {
   organizationId    String?
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
+
+  // ITF eligibility — set by Super Admin when creating the course. Controls
+  // whether enrollments in this course show up in ITF reclaim exports.
+  isItfEligible   Boolean  @default(false)
+  itfDeliveryMode String?  // "ONLINE" | "IN_HOUSE" | "EXTERNAL" | "OVERSEAS"
+  itfContactHours Float?   // Manually set contact hours (overrides sum of lesson durations)
+  itfFacilitator  String?  // Provider name shown on the export
 
   createdBy     User?          @relation(fields: [createdById], references: [id])
   organization  Organization?  @relation(fields: [organizationId], references: [id])
@@ -499,6 +519,16 @@ model Enrollment {
   paymentId      String?           @unique
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
+
+  // Attendance / proof-of-completion evidence for ITF reclaim claims.
+  // First and last lesson session timestamps + any quiz/lab pass status
+  // are aggregated from LessonProgress records when the export runs.
+  attendanceFirstAt  DateTime?
+  attendanceLastAt   DateTime?
+  attendanceMinutes  Int?      @default(0)
+  quizPassed         Boolean?  // last quiz attempt passed
+  labCompleted       Boolean?  // any required lab session completed
+  itfLocked          Boolean   @default(false)  // set true after export generated; locks edits
 
   user       User    @relation("EnrollmentUser", fields: [userId], references: [id])
   course     Course  @relation(fields: [courseId], references: [id])
@@ -1036,4 +1066,33 @@ model LabSolve {
   @@unique([labId, userId])
   @@index([userId])
   @@index([labId])
+}
+
+// =========================================================================
+// ITF Reclaim Audit Log
+// =========================================================================
+//
+// Every time an Org Admin generates an ITF export we record who, when, and
+// the period — and we lock the underlying enrollments from edits so the
+// export is defensible if ITF ever queries it.
+
+model ItfExport {
+  id             String   @id @default(cuid())
+  organizationId String?
+  generatedById  String
+  trainingYear   Int
+  rowCount       Int
+  totalHours     Float
+  totalCostNgn   Int
+  format         String   @default("xlsx")  // "xlsx" | "pdf" | "csv"
+  notes          String?
+  generatedAt    DateTime @default(now())
+
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  generatedBy  User          @relation("ItfExportGeneratedBy", fields: [generatedById], references: [id])
+
+  @@index([organizationId])
+  @@index([generatedById])
+  @@index([trainingYear])
+  @@index([generatedAt])
 }
