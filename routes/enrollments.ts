@@ -37,64 +37,134 @@ const checkoutSchema = z.object({ provider: z.nativeEnum(PaymentProvider) });
 router.post("/checkout", async (req, res) => {
   const parsed = checkoutSchema.safeParse(req.body);
   if (!parsed.success) {
-    return res.status(400).json({ error: parsed.error.flatten() });
+    console.error(`[Enrollment] Checkout validation failed:`, parsed.error.flatten());
+    return res.status(400).json({ error: "Invalid request parameters" });
   }
 
-  const courseId = courseIdOf(req);
-  const [course, user] = await Promise.all([
-    prisma.course.findUnique({ where: { id: courseId } }),
-    prisma.user.findUniqueOrThrow({ where: { id: req.user!.id } }),
-  ]);
-  if (!course) throw new NotFoundError("Course not found");
-  if (course.priceCents <= 0) {
-    return res.status(400).json({ error: "This course is free — use /enroll/free instead" });
-  }
+  try {
+    const courseId = courseIdOf(req);
+    const userId = req.user!.id;
+    const provider = parsed.data.provider;
 
-  const payment = await prisma.payment.create({
-    data: {
-      userId: user.id,
+    console.log(`[Enrollment] Checkout initiated`, { courseId, userId, provider });
+
+    const [course, user] = await Promise.all([
+      prisma.course.findUnique({ where: { id: courseId } }),
+      prisma.user.findUniqueOrThrow({ where: { id: userId } }),
+    ]);
+
+    if (!course) {
+      console.error(`[Enrollment] Course not found: ${courseId}`);
+      return res.status(404).json({ error: "Course not found" });
+    }
+
+    if (course.priceCents <= 0) {
+      console.error(`[Enrollment] Course is free but checkout requested: ${courseId}`);
+      return res.status(400).json({ error: "This course is free — use /enroll/free instead" });
+    }
+
+    console.log(`[Enrollment] Creating payment record`, {
       courseId,
-      amountCents: course.priceCents,
-      currency: course.currency,
-      provider: parsed.data.provider,
-      status: PaymentStatus.PENDING,
-    },
-  });
-
-  const successUrl = `${APP_URL}/dashboard/learn/${courseId}?checkout=success`;
-  const cancelUrl = `${APP_URL}/dashboard/learn/${courseId}?checkout=cancelled`;
-
-  if (parsed.data.provider === PaymentProvider.STRIPE) {
-    const session = await stripeService.createCheckoutSession({
-      courseId,
-      courseTitle: course.title,
-      priceCents: course.priceCents,
+      courseName: course.title,
+      amount: course.priceCents,
       currency: course.currency,
       userId: user.id,
       userEmail: user.email,
-      successUrl,
-      cancelUrl,
+      provider,
     });
-    if (!session) {
-      return res.status(503).json({ error: "Stripe is not configured" });
-    }
-    await prisma.payment.update({ where: { id: payment.id }, data: { providerRef: session.id } });
-    return res.status(201).json({ checkoutUrl: session.url });
-  }
 
-  const transaction = await paystackService.initializeTransaction({
-    email: user.email,
-    amountCents: course.priceCents,
-    currency: course.currency,
-    reference: payment.id,
-    callbackUrl: successUrl,
-    metadata: { courseId, userId: user.id, paymentId: payment.id },
-  });
-  if (!transaction) {
-    return res.status(503).json({ error: "Paystack is not configured" });
+    const payment = await prisma.payment.create({
+      data: {
+        userId: user.id,
+        courseId,
+        amountCents: course.priceCents,
+        currency: course.currency,
+        provider,
+        status: PaymentStatus.PENDING,
+      },
+    });
+
+    console.log(`[Enrollment] Payment record created: ${payment.id}`);
+
+    const successUrl = `${APP_URL}/dashboard/learn/${courseId}?checkout=success`;
+    const cancelUrl = `${APP_URL}/dashboard/learn/${courseId}?checkout=cancelled`;
+
+    if (provider === PaymentProvider.STRIPE) {
+      try {
+        console.log(`[Enrollment] Initializing Stripe checkout for payment: ${payment.id}`);
+        const session = await stripeService.createCheckoutSession({
+          courseId,
+          courseTitle: course.title,
+        priceCents: course.priceCents,
+        currency: course.currency,
+        userId: user.id,
+        userEmail: user.email,
+        successUrl,
+        cancelUrl,
+      });
+      if (!session) {
+        console.error(`[Enrollment] Stripe not configured`);
+        return res.status(503).json({ error: "Stripe is not configured" });
+      }
+      await prisma.payment.update({ where: { id: payment.id }, data: { providerRef: session.id } });
+      console.log(`[Enrollment] Stripe session created: ${session.id}`);
+      return res.status(201).json({ checkoutUrl: session.url });
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        console.error(`[Enrollment] Stripe checkout error:`, errorMsg);
+        
+        // Mark payment as failed if provider initialization fails
+        await prisma.payment.update({
+          where: { id: payment.id },
+          data: { status: PaymentStatus.FAILED },
+        });
+        
+        return res.status(503).json({ 
+          error: "Stripe payment initialization failed. Please try again or contact support." 
+        });
+      }
+    }
+
+    try {
+      console.log(`[Enrollment] Initializing Paystack checkout for payment: ${payment.id}`);
+      const transaction = await paystackService.initializeTransaction({
+        email: user.email,
+        amountCents: course.priceCents,
+        currency: course.currency,
+        reference: payment.id,
+        callbackUrl: successUrl,
+        metadata: { courseId, userId: user.id, paymentId: payment.id },
+      });
+      if (!transaction) {
+        console.error(`[Enrollment] Paystack not configured`);
+        return res.status(503).json({ error: "Paystack is not configured" });
+      }
+      await prisma.payment.update({ where: { id: payment.id }, data: { providerRef: transaction.reference } });
+      console.log(`[Enrollment] Paystack transaction initialized: ${transaction.reference}`);
+      return res.status(201).json({
+        checkoutUrl: transaction.authorization_url,
+        accessCode: transaction.access_code,
+        publicKey: process.env.PAYSTACK_PUBLIC_KEY ?? null,
+      });
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.error(`[Enrollment] Paystack checkout error:`, errorMsg);
+      
+      // Mark payment as failed if provider initialization fails
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data: { status: PaymentStatus.FAILED },
+      });
+      
+      return res.status(503).json({ 
+        error: "Paystack payment initialization failed. Please try again or contact support." 
+      });
+    }
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    console.error(`[Enrollment] Checkout error:`, errorMsg);
+    return res.status(500).json({ error: "An error occurred while processing your request" });
   }
-  await prisma.payment.update({ where: { id: payment.id }, data: { providerRef: transaction.reference } });
-  res.status(201).json({ checkoutUrl: transaction.authorization_url });
 });
 
 // POST /courses/:courseId/enroll/assign — admin/manager assigns one learner.
