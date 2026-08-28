@@ -25,8 +25,11 @@ import coursesRouter from "./routes/courses";
 import enrollmentCodesRouter from "./routes/enrollmentCodes";
 import enrollmentRedeemRouter from "./routes/enrollmentRedeem";
 import eventsRouter from "./routes/events";
+import gamificationRouter from "./routes/gamification";
 import groupsRouter from "./routes/groups";
+import itfRouter from "./routes/itf";
 import jobsRouter from "./routes/jobs";
+import labsRouter from "./routes/labs";
 import marketingCampaignsRouter from "./routes/marketingCampaigns";
 import meRouter from "./routes/me";
 import mentorsRouter from "./routes/mentors";
@@ -36,6 +39,7 @@ import notificationsRouter from "./routes/notifications";
 import organizationsRouter from "./routes/organizations";
 import postsRouter from "./routes/posts";
 import reportsRouter from "./routes/reports";
+import sendingProfilesRouter from "./routes/sendingProfiles";
 import storageRouter from "./routes/storage";
 import usersRouter from "./routes/users";
 import webhooksRouter from "./routes/webhooks";
@@ -96,6 +100,10 @@ app.use("/assessments", assessmentsRouter);
 app.use("/storage", storageRouter);
 app.use("/enrollment-codes", enrollmentCodesRouter);
 app.use("/enrollments", enrollmentRedeemRouter);
+app.use("/itf", itfRouter);
+app.use("/labs", labsRouter);
+app.use("/gamification", gamificationRouter);
+app.use("/sending-profiles", sendingProfilesRouter);
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (err instanceof ApiError) {

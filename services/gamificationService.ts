@@ -1,4 +1,5 @@
 import { prisma } from "@novr/db";
+import { Prisma } from "@prisma/client";
 import { REPUTATION_XP_THRESHOLDS } from "@novr/types";
 import type { ReputationLevel } from "@novr/types";
 
@@ -15,7 +16,7 @@ export async function awardXP(userId: string, amount: number, reason: string, me
 
   await prisma.$transaction([
     prisma.user.update({ where: { id: userId }, data: { xp: { increment: amount } } }),
-    prisma.xpLog.create({ data: { userId, amount, reason, metadata } }),
+    prisma.xpLog.create({ data: { userId, amount, reason, metadata: metadata as unknown as Prisma.InputJsonValue } }),
   ]);
 
   await updateLevel(userId);
