@@ -12,7 +12,7 @@
     "db:migrate": "npx prisma migrate dev --schema=packages/db/prisma/schema.prisma",
     "db:push": "npx prisma db push --schema=packages/db/prisma/schema.prisma"
   },
-  "dependencies": {
+"dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
     "@aws-sdk/client-s3": "^3.716.0",
     "@aws-sdk/s3-request-presigner": "^3.716.0",
@@ -30,6 +30,7 @@
     "express": "^4.21.2",
     "express-async-errors": "^3.1.1",
     "jose": "^5.9.6",
+    "jszip": "^3.10.1",
     "next-auth": "^4.24.11",
     "nodemailer": "^7.0.13",
     "prisma": "^5.22.0",

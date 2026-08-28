@@ -53,6 +53,7 @@ enum LessonType {
   PDF
   QUIZ
   LIVE
+  SLIDES
 }
 
 enum QuestionType {
@@ -276,9 +277,19 @@ model User {
 
   itfExportsGenerated ItfExport[] @relation("ItfExportGeneratedBy")
 
+  itfClaimsCreated    ItfClaim[] @relation("ItfClaimCreatedBy")
+  itfClaimsSubmitted  ItfClaim[] @relation("ItfClaimSubmittedBy")
+  itfClaimsApproved   ItfClaim[] @relation("ItfClaimApprovedBy")
+  itfClaimsRejected   ItfClaim[] @relation("ItfClaimRejectedBy")
+
+  sendingProfilesCreated SendingProfile[] @relation("SendingProfileCreatedBy")
+
+  xpLogs XpLog[]
+
   @@index([role])
   @@index([memberType])
   @@index([organizationId])
+  @@index([xp])
 }
 
 // =========================================================================
@@ -321,6 +332,8 @@ model Organization {
   complianceAssignments ComplianceAssignment[]
   labs                 Lab[]
   itfExports           ItfExport[]
+  itfClaims            ItfClaim[]
+  sendingProfiles      SendingProfile[]
 
   @@index([plan])
 }
@@ -447,6 +460,7 @@ model Lesson {
   muxAssetId        String?
   muxPlaybackId     String?
   videoStatus       VideoStatus?
+  slidesManifest    Json?
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
 
@@ -459,6 +473,25 @@ model Lesson {
   @@index([courseId])
   @@index([muxUploadId])
   @@index([muxAssetId])
+}
+
+model SlidesGeneration {
+  id                  String   @id @default(cuid())
+  sourceLessonId      String   @unique
+  courseId            String
+  adminUserId         String
+  status              String   @default("PENDING")
+  slideCount          Int      @default(10)
+  voiceover           Boolean  @default(false)
+  generatedLessonIds String[] @default([])
+  errorMessage        String?
+  deckId              String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([adminUserId])
+  @@index([status])
+  @@index([courseId])
 }
 
 model Quiz {
@@ -895,6 +928,20 @@ model UserBadge {
   @@unique([userId, badgeId])
 }
 
+model XpLog {
+  id        String   @id @default(cuid())
+  userId    String
+  amount    Int
+  reason    String
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
 // =========================================================================
 // Notifications & payments
 // =========================================================================
@@ -957,9 +1004,12 @@ model Campaign {
 
   campaignResults CampaignResult[]
   organization    Organization? @relation(fields: [organizationId], references: [id])
+  sendingProfile  SendingProfile? @relation(fields: [sendingProfileId], references: [id])
+  sendingProfileId String?
 
   @@index([status])
   @@index([organizationId])
+  @@index([sendingProfileId])
 }
 
 model CampaignResult {
@@ -1090,9 +1140,92 @@ model ItfExport {
 
   organization Organization? @relation(fields: [organizationId], references: [id])
   generatedBy  User          @relation("ItfExportGeneratedBy", fields: [generatedById], references: [id])
+  claims       ItfClaim[]
 
   @@index([organizationId])
   @@index([generatedById])
   @@index([trainingYear])
   @@index([generatedAt])
+}
+
+enum ItfClaimStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+model ItfClaim {
+  id                  String          @id @default(cuid())
+  organizationId      String?
+  trainingYear        Int
+  status              ItfClaimStatus  @default(DRAFT)
+
+  // Snapshot at the time the claim was opened (so historical estimates don't drift)
+  estimatedAmountNgn   Int
+  totalTrainingCostNgn Int
+  totalTrainees        Int
+  totalHours           Float
+
+  // Lifecycle fields (null until set)
+  itfReference        String?
+  submittedAt         DateTime?
+  submittedById       String?
+  submissionNotes     String?
+
+  approvedAmountNgn   Int?
+  approvedAt          DateTime?
+  approvedById        String?
+  approvalNotes       String?
+
+  rejectedAt          DateTime?
+  rejectedById        String?
+  rejectionReason     String?
+
+  // Optional link back to the export used to submit
+  itfExportId         String?
+  itfExport           ItfExport?      @relation(fields: [itfExportId], references: [id])
+
+  createdById         String
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  organization        Organization?   @relation(fields: [organizationId], references: [id])
+  createdBy           User            @relation("ItfClaimCreatedBy", fields: [createdById], references: [id])
+  submittedBy         User?           @relation("ItfClaimSubmittedBy", fields: [submittedById], references: [id])
+  approvedBy          User?           @relation("ItfClaimApprovedBy", fields: [approvedById], references: [id])
+  rejectedBy          User?           @relation("ItfClaimRejectedBy", fields: [rejectedById], references: [id])
+
+  // One open claim per (org, year) for DRAFT and SUBMITTED states.
+  // APPROVED/REJECTED claims are historical and can coexist.
+  @@index([organizationId, trainingYear])
+  @@index([status])
+  @@index([trainingYear])
+}
+
+// =========================================================================
+// Phishing — saved email senders
+// =========================================================================
+
+model SendingProfile {
+  id              String   @id @default(cuid())
+  organizationId  String?
+  name            String
+  senderName      String
+  senderEmail     String
+  smtpHost        String
+  smtpPort        Int      @default(587)
+  smtpUsername    String?
+  smtpPassword    String?
+  isDefault       Boolean  @default(false)
+  createdById     String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  organization    Organization? @relation(fields: [organizationId], references: [id])
+  createdBy       User          @relation("SendingProfileCreatedBy", fields: [createdById], references: [id])
+  campaigns       Campaign[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
 }

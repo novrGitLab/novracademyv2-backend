@@ -14,6 +14,7 @@ import * as progressService from "../services/progressService";
 import * as quizAttemptService from "../services/quizAttemptService";
 import * as quizService from "../services/quizService";
 import * as r2Service from "../services/r2Service";
+import * as slidesGenerationService from "../services/slidesGenerationService";
 
 const router = Router({ mergeParams: true });
 
@@ -439,6 +440,50 @@ router.post("/:lessonId/reorder", requireRole(...ADMIN_ROLES), async (req, res) 
   }
   const lesson = await lessonService.reorderLesson(req.params.lessonId, direction);
   res.json(lesson);
+});
+
+// POST /courses/:courseId/lessons/:lessonId/slides/generate — admin only.
+// Triggers PDF→slides conversion for a PDF lesson.
+const generateSlidesSchema = z.object({
+  slideCount: z.number().int().min(5).max(20).default(10),
+  voiceover: z.boolean().default(false),
+});
+
+router.post("/:lessonId/slides/generate", requireRole(...ADMIN_ROLES), async (req, res) => {
+  const parsed = generateSlidesSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const lesson = await lessonService.getLessonById(req.params.lessonId);
+  if (!lesson || lesson.courseId !== courseIdOf(req)) {
+    throw new NotFoundError("Lesson not found");
+  }
+  if (lesson.type !== LessonType.PDF) {
+    return res.status(400).json({ error: "Only PDF lessons can generate slides" });
+  }
+  if (!lesson.contentUrl) {
+    return res.status(400).json({ error: "PDF lesson has no file uploaded" });
+  }
+
+  const generation = await slidesGenerationService.createSlidesGeneration(
+    req.params.lessonId,
+    req.user!.id,
+    parsed.data.slideCount,
+    parsed.data.voiceover
+  );
+
+  res.status(202).json({ generationId: generation.id, status: generation.status });
+});
+
+// GET /courses/:courseId/lessons/:lessonId/slides/status — admin only.
+// Poll for slides generation completion.
+router.get("/:lessonId/slides/status", requireRole(...ADMIN_ROLES), async (req, res) => {
+  const status = await slidesGenerationService.getSlidesGenerationStatus(req.params.lessonId);
+  if (!status) {
+    return res.status(404).json({ error: "No slides generation found for this lesson" });
+  }
+  res.json(status);
 });
 
 export default router;
