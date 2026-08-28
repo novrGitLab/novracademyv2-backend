@@ -71,6 +71,55 @@ async function sendEmail(to: string, subject: string, react: ReactElement) {
   });
 }
 
+/**
+ * Sends a marketing campaign's raw HTML to a batch of recipients over the
+ * same SMTP transport as every other email. Nodemailer has no native batch
+ * endpoint, so this sends one at a time, capped at a modest concurrency so
+ * a large list doesn't open hundreds of simultaneous SMTP connections.
+ * Each recipient gets their own unsubscribe link appended to the body.
+ */
+export async function sendMarketingCampaignBatch(
+  recipients: { email: string; unsubscribeToken: string }[],
+  subject: string,
+  bodyHtml: string
+): Promise<{ sent: number; failed: number }> {
+  const transport = getTransporter();
+  if (!transport) {
+    console.warn(`Skipping marketing campaign "${subject}" — SMTP is not configured (set SMTP_USER and SMTP_PASS).`);
+    return { sent: 0, failed: recipients.length };
+  }
+
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  const CONCURRENCY = 10;
+  let sent = 0;
+  let failed = 0;
+
+  for (let i = 0; i < recipients.length; i += CONCURRENCY) {
+    const chunk = recipients.slice(i, i + CONCURRENCY);
+    const results = await Promise.allSettled(
+      chunk.map((recipient) =>
+        transport.sendMail({
+          from: FROM,
+          to: recipient.email,
+          subject,
+          html: `${bodyHtml}<p style="margin-top:32px;font-size:12px;color:#6B7280">
+            <a href="${appUrl}/unsubscribe?token=${recipient.unsubscribeToken}">Unsubscribe</a>
+          </p>`,
+        })
+      )
+    );
+    for (const result of results) {
+      if (result.status === "fulfilled") sent++;
+      else {
+        console.error("Marketing campaign email failed:", result.reason);
+        failed++;
+      }
+    }
+  }
+
+  return { sent, failed };
+}
+
 export async function sendEnrollmentConfirmedEmail(params: {
   to: string;
   learnerName: string;

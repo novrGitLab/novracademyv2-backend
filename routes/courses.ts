@@ -82,7 +82,11 @@ router.post("/", requireRole(...ADMIN_ROLES), async (req, res) => {
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.flatten() });
   }
-  const course = await courseService.createCourse({ ...parsed.data, createdById: req.user!.id });
+  const course = await courseService.createCourse({
+    ...parsed.data,
+    createdById: req.user!.id,
+    organizationId: req.user!.organizationId,
+  });
   res.status(201).json(course);
 });
 
@@ -102,6 +106,14 @@ router.patch("/:id", requireRole(...ADMIN_ROLES), async (req, res) => {
 router.delete("/:id", requireRole(...ADMIN_ROLES), async (req, res) => {
   await courseService.deleteCourse(req.params.id);
   res.status(204).send();
+});
+
+// POST /courses/:id/certificates/regenerate — admin only. Re-renders every
+// issued certificate for this course, e.g. after the template or the
+// tenant's branding (logo/color) changes.
+router.post("/:id/certificates/regenerate", requireRole(...ADMIN_ROLES), async (req, res) => {
+  const result = await certificateService.regenerateCertificatesForCourse(req.params.id);
+  res.json(result);
 });
 
 // GET /courses/:id/progress — per-lesson unlock/completion state for the

@@ -72,6 +72,7 @@ export const EnrollmentSource = {
   ADMIN_ASSIGNED: "ADMIN_ASSIGNED",
   BULK: "BULK",
   COHORT: "COHORT",
+  CODE: "CODE",
 } as const;
 export type EnrollmentSource = (typeof EnrollmentSource)[keyof typeof EnrollmentSource];
 
@@ -175,6 +176,46 @@ export const NotificationType = {
   GENERAL: "GENERAL",
 } as const;
 export type NotificationType = (typeof NotificationType)[keyof typeof NotificationType];
+
+export const NewsletterSource = {
+  WEBSITE: "WEBSITE",
+  IMPORT: "IMPORT",
+  MANUAL: "MANUAL",
+} as const;
+export type NewsletterSource = (typeof NewsletterSource)[keyof typeof NewsletterSource];
+
+export const NewsletterStatus = {
+  ACTIVE: "ACTIVE",
+  UNSUBSCRIBED: "UNSUBSCRIBED",
+} as const;
+export type NewsletterStatus = (typeof NewsletterStatus)[keyof typeof NewsletterStatus];
+
+export const MarketingCampaignStatus = {
+  DRAFT: "DRAFT",
+  SCHEDULED: "SCHEDULED",
+  SENT: "SENT",
+} as const;
+export type MarketingCampaignStatus = (typeof MarketingCampaignStatus)[keyof typeof MarketingCampaignStatus];
+
+export const AssessmentType = {
+  BASELINE: "BASELINE",
+  MONTHLY: "MONTHLY",
+  CLOSING: "CLOSING",
+} as const;
+export type AssessmentType = (typeof AssessmentType)[keyof typeof AssessmentType];
+
+export const AssessmentScope = {
+  UNIVERSAL: "UNIVERSAL",
+  ORGANIZATION: "ORGANIZATION",
+} as const;
+export type AssessmentScope = (typeof AssessmentScope)[keyof typeof AssessmentScope];
+
+export const DiscountType = {
+  FREE: "FREE",
+  PERCENTAGE: "PERCENTAGE",
+  FIXED_AMOUNT: "FIXED_AMOUNT",
+} as const;
+export type DiscountType = (typeof DiscountType)[keyof typeof DiscountType];
 
 /** Roles allowed to access the admin dashboard. */
 export const ADMIN_ROLES: UserRole[] = [UserRole.SUPER_ADMIN, UserRole.ORG_ADMIN, UserRole.INSTITUTION_ADMIN];

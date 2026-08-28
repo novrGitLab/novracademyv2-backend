@@ -73,7 +73,7 @@ async function resolveUserFromRequest(req: Request): Promise<AuthUser | null> {
     // only in development and upsert a real User row so any code storing
     // req.user.id as a foreign key (courses.createdById, etc.) still works.
     const isDev = !process.env.NODE_ENV || process.env.NODE_ENV === "development";
-    if (isDev && payload.sub.startsWith("test-")) {
+    if (isDev && (payload.sub as string).startsWith("test-")) {
       const email = (payload.email as string) ?? `${payload.sub}@novr.local`;
       const role = (payload.role as UserRole) ?? "LEARNER";
       const name = (payload.name as string) ?? null;
@@ -87,7 +87,7 @@ async function resolveUserFromRequest(req: Request): Promise<AuthUser | null> {
     }
 
     const user = await prisma.user.findUnique({
-      where: { id: payload.sub },
+      where: { id: payload.sub as string },
       select: { id: true, email: true, name: true, role: true, memberType: true, status: true, organizationId: true },
     });
 

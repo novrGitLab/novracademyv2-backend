@@ -81,6 +81,7 @@ export interface CreateCourseInput {
   allowForwardScrub?: boolean;
   defaultValidityDays?: number;
   createdById?: string;
+  organizationId?: string | null;
 }
 
 export async function createCourse(input: CreateCourseInput) {

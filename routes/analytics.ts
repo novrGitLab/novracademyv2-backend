@@ -2,6 +2,7 @@ import { Router } from "express";
 import { ADMIN_ROLES } from "@novr/types";
 import { authenticate, requireRole } from "../middleware/auth";
 import * as analyticsService from "../services/analyticsService";
+import * as assessmentService from "../services/assessmentService";
 
 const router = Router();
 
@@ -33,6 +34,10 @@ router.get("/community", async (_req, res) => {
 
 router.get("/revenue", async (_req, res) => {
   res.json(await analyticsService.getRevenueSummary());
+});
+
+router.get("/assessments", async (_req, res) => {
+  res.json(await assessmentService.getAssessmentAnalytics());
 });
 
 export default router;

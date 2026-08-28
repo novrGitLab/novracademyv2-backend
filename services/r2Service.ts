@@ -1,4 +1,4 @@
-import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const bucket = process.env.R2_BUCKET_NAME ?? "novracademy-media";
@@ -83,4 +83,41 @@ export async function createViewUrl(key: string, contentType: string): Promise<s
     ResponseContentType: contentType,
   });
   return getSignedUrl(client, command, { expiresIn: VIEW_URL_TTL_SECONDS });
+}
+
+/** Whether R2 credentials are present — used by the admin storage settings page. */
+export function isConfigured(): boolean {
+  return Boolean(getClient());
+}
+
+export function getStatus() {
+  return {
+    configured: isConfigured(),
+    bucketName: bucket,
+    accountId: process.env.R2_ACCOUNT_ID ? `${process.env.R2_ACCOUNT_ID.slice(0, 4)}…${process.env.R2_ACCOUNT_ID.slice(-4)}` : null,
+    publicUrl: process.env.R2_PUBLIC_URL || null,
+  };
+}
+
+/**
+ * Round-trips a tiny throwaway object through R2 (put, then delete) to
+ * confirm the configured credentials actually work — not just that env
+ * vars are non-empty, since a typo'd key/secret would otherwise only
+ * surface as a mysterious failure on someone's first real upload.
+ */
+export async function testConnection(): Promise<{ ok: boolean; message: string }> {
+  const client = getClient();
+  if (!client) {
+    return { ok: false, message: "R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, or R2_SECRET_ACCESS_KEY is missing." };
+  }
+  const key = `_connection-test/${Date.now()}.txt`;
+  try {
+    await client.send(
+      new PutObjectCommand({ Bucket: bucket, Key: key, Body: Buffer.from("novr academy connection test"), ContentType: "text/plain" })
+    );
+    await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+    return { ok: true, message: `Connected — wrote and deleted a test object in "${bucket}".` };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : "Connection test failed" };
+  }
 }

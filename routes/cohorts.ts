@@ -30,7 +30,7 @@ router.post("/", async (req, res) => {
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.flatten() });
   }
-  const cohort = await cohortService.createCohort(parsed.data);
+  const cohort = await cohortService.createCohort({ ...parsed.data, organizationId: req.user!.organizationId });
   res.status(201).json(cohort);
 });
 

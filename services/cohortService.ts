@@ -45,6 +45,7 @@ export interface CreateCohortInput {
   name: string;
   year?: number;
   description?: string;
+  organizationId?: string | null;
 }
 
 export async function createCohort(input: CreateCohortInput) {
