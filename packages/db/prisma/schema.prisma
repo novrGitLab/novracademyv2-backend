@@ -53,6 +53,7 @@ enum LessonType {
   PDF
   QUIZ
   LIVE
+  SLIDES
 }
 
 enum QuestionType {
@@ -467,6 +468,7 @@ model Lesson {
   muxAssetId        String?
   muxPlaybackId     String?
   videoStatus       VideoStatus?
+  slidesManifest    Json?
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
 
@@ -479,6 +481,18 @@ model Lesson {
   @@index([courseId])
   @@index([muxUploadId])
   @@index([muxAssetId])
+}
+
+model SlidesGeneration {
+  id                  String   @id @default(cuid())
+  sourceLessonId      String   @unique
+  courseId            String
+  adminUserId         String
+  status              String   @default("PENDING")
+  manifestUrl         String?
+  errorMessage        String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 }
 
 model Quiz {
