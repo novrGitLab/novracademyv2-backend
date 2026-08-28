@@ -53,6 +53,7 @@ enum LessonType {
   PDF
   QUIZ
   LIVE
+  SLIDES
 }
 
 enum QuestionType {
@@ -313,6 +314,20 @@ model User {
   growthRecord              GrowthRecord?
   createdEnrollmentCodes    EnrollmentCode[]      @relation("EnrollmentCodeCreator")
 
+  labSessions LabSession[]
+  labSolves   LabSolve[]
+
+  itfExportsGenerated ItfExport[] @relation("ItfExportGeneratedBy")
+
+  itfClaimsCreated    ItfClaim[] @relation("ItfClaimCreatedBy")
+  itfClaimsSubmitted  ItfClaim[] @relation("ItfClaimSubmittedBy")
+  itfClaimsApproved   ItfClaim[] @relation("ItfClaimApprovedBy")
+  itfClaimsRejected   ItfClaim[] @relation("ItfClaimRejectedBy")
+
+  sendingProfilesCreated SendingProfile[] @relation("SendingProfileCreatedBy")
+
+  xpLogs XpLog[]
+
   @@index([role])
   @@index([memberType])
   @@index([organizationId])
@@ -340,6 +355,16 @@ model Organization {
   senderName      String?
   senderEmail     String?
 
+  // ITF compliance profile — captured once, populates every ITF export header
+  itfRcNumber              String?
+  itfRegistrationNumber    String?
+  itfIndustrySector        String?
+  itfAnnualPayrollBand     String?
+  itfEmployeeHeadcount     Int?
+  itfContactPhone          String?
+  itfContactEmail          String?
+  itfContactAddress        String?
+
   users                User[]
   courses              Course[]
   cohorts              Cohort[]
@@ -347,6 +372,10 @@ model Organization {
   complianceSetting    ComplianceSetting?
   complianceAssignments ComplianceAssignment[]
   assessments          Assessment[]
+  labs                 Lab[]
+  itfExports           ItfExport[]
+  itfClaims            ItfClaim[]
+  sendingProfiles      SendingProfile[]
 
   @@index([plan])
 }
@@ -405,6 +434,12 @@ model Course {
   organizationId    String?
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
+
+  isItfEligible   Boolean  @default(false)
+  itfDeliveryMode String?
+  itfContactHours Float?
+  itfFacilitator  String?
+  category        String?
 
   createdBy     User?          @relation(fields: [createdById], references: [id])
   organization  Organization?  @relation(fields: [organizationId], references: [id])
@@ -467,6 +502,7 @@ model Lesson {
   muxAssetId        String?
   muxPlaybackId     String?
   videoStatus       VideoStatus?
+  slidesManifest    Json?
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
 
@@ -479,6 +515,26 @@ model Lesson {
   @@index([courseId])
   @@index([muxUploadId])
   @@index([muxAssetId])
+}
+
+model SlidesGeneration {
+  id                  String   @id @default(cuid())
+  sourceLessonId      String   @unique
+  courseId            String
+  adminUserId         String
+  status              String   @default("PENDING")
+  slideCount          Int      @default(10)
+  voiceover           Boolean  @default(false)
+  generatedLessonIds  String[] @default([])
+  manifestUrl         String?
+  errorMessage        String?
+  deckId              String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([adminUserId])
+  @@index([status])
+  @@index([courseId])
 }
 
 model Quiz {
@@ -963,14 +1019,17 @@ model Campaign {
   results            Json     @default("{}")
   templateHtml       String?
   landingPageHtml    String?
+  sendingProfileId   String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
   campaignResults CampaignResult[]
   organization    Organization? @relation(fields: [organizationId], references: [id])
+  sendingProfile  SendingProfile? @relation(fields: [sendingProfileId], references: [id])
 
   @@index([status])
   @@index([organizationId])
+  @@index([sendingProfileId])
 }
 
 model CampaignResult {
@@ -1184,4 +1243,183 @@ model EnrollmentCode {
   createdBy User   @relation("EnrollmentCodeCreator", fields: [createdById], references: [id])
 
   @@index([courseId])
+}
+
+// =========================================================================
+// Gamification — XP logs
+// =========================================================================
+
+model XpLog {
+  id        String   @id @default(cuid())
+  userId    String
+  amount    Int
+  reason    String
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+// =========================================================================
+// Labs (CTF-Style Challenges)
+// =========================================================================
+
+model Lab {
+  id              String   @id @default(cuid())
+  organizationId  String?
+  labTemplateId   String
+  name            String
+  category        String
+  description     String
+  points          Int      @default(50)
+  flag            String
+  createdAt       DateTime @default(now())
+
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  sessions     LabSession[]
+  solves       LabSolve[]
+
+  @@index([organizationId])
+  @@index([category])
+}
+
+model LabSession {
+  id             String    @id @default(cuid())
+  labId          String
+  userId         String
+  agentSessionId String
+  startedAt      DateTime  @default(now())
+  endedAt        DateTime?
+  status         String    @default("active")
+
+  lab   Lab  @relation(fields: [labId], references: [id])
+  user  User @relation(fields: [userId], references: [id])
+
+  solves LabSolve[]
+
+  @@index([labId])
+  @@index([userId])
+  @@index([status])
+}
+
+model LabSolve {
+  id           String   @id @default(cuid())
+  labId        String
+  userId       String
+  labSessionId String?
+  solvedAt     DateTime @default(now())
+
+  lab     Lab         @relation(fields: [labId], references: [id])
+  user    User        @relation(fields: [userId], references: [id])
+  session LabSession? @relation(fields: [labSessionId], references: [id])
+
+  @@unique([labId, userId])
+  @@index([userId])
+  @@index([labId])
+}
+
+// =========================================================================
+// ITF Reclaim Audit Log
+// =========================================================================
+
+model ItfExport {
+  id             String   @id @default(cuid())
+  organizationId String?
+  generatedById  String
+  trainingYear   Int
+  rowCount       Int
+  totalHours     Float
+  totalCostNgn   Int
+  format         String   @default("xlsx")
+  notes          String?
+  generatedAt    DateTime @default(now())
+
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  generatedBy  User          @relation("ItfExportGeneratedBy", fields: [generatedById], references: [id])
+  claims       ItfClaim[]
+
+  @@index([organizationId])
+  @@index([generatedById])
+  @@index([trainingYear])
+  @@index([generatedAt])
+}
+
+enum ItfClaimStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+model ItfClaim {
+  id                  String          @id @default(cuid())
+  organizationId      String?
+  trainingYear        Int
+  status              ItfClaimStatus  @default(DRAFT)
+
+  estimatedAmountNgn   Int
+  totalTrainingCostNgn Int
+  totalTrainees        Int
+  totalHours           Float
+
+  itfReference        String?
+  submittedAt         DateTime?
+  submittedById       String?
+  submissionNotes     String?
+
+  approvedAmountNgn   Int?
+  approvedAt          DateTime?
+  approvedById        String?
+  approvalNotes       String?
+
+  rejectedAt          DateTime?
+  rejectedById        String?
+  rejectionReason     String?
+
+  itfExportId         String?
+  itfExport           ItfExport?      @relation(fields: [itfExportId], references: [id])
+
+  createdById         String
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  organization        Organization?   @relation(fields: [organizationId], references: [id])
+  createdBy           User            @relation("ItfClaimCreatedBy", fields: [createdById], references: [id])
+  submittedBy         User?           @relation("ItfClaimSubmittedBy", fields: [submittedById], references: [id])
+  approvedBy          User?           @relation("ItfClaimApprovedBy", fields: [approvedById], references: [id])
+  rejectedBy          User?           @relation("ItfClaimRejectedBy", fields: [rejectedById], references: [id])
+
+  @@index([organizationId, trainingYear])
+  @@index([status])
+  @@index([trainingYear])
+}
+
+// =========================================================================
+// Phishing — saved email senders
+// =========================================================================
+
+model SendingProfile {
+  id              String   @id @default(cuid())
+  organizationId  String?
+  name            String
+  senderName      String
+  senderEmail     String
+  smtpHost        String
+  smtpPort        Int      @default(587)
+  smtpUsername    String?
+  smtpPassword    String?
+  isDefault       Boolean  @default(false)
+  createdById     String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  organization    Organization? @relation(fields: [organizationId], references: [id])
+  createdBy       User          @relation("SendingProfileCreatedBy", fields: [createdById], references: [id])
+  campaigns       Campaign[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
 }

@@ -57,6 +57,7 @@ export const LessonType = {
   PDF: "PDF",
   QUIZ: "QUIZ",
   LIVE: "LIVE",
+  SLIDES: "SLIDES",
 } as const;
 export type LessonType = (typeof LessonType)[keyof typeof LessonType];
 
