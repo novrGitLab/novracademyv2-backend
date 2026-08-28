@@ -52,9 +52,10 @@ router.patch("/:id", async (req, res) => {
 
 // POST /marketing-campaigns/:id/send — sends immediately to all ACTIVE
 // subscribers (queued via BullMQ if REDIS_URL is set, otherwise inline).
+// `deliveryStats` is null when the send was queued (stats aren't known yet).
 router.post("/:id/send", async (req, res) => {
-  const campaign = await marketingCampaignService.sendCampaignNow(req.params.id);
-  res.json(campaign);
+  const { campaign, stats } = await marketingCampaignService.sendCampaignNow(req.params.id);
+  res.json({ ...campaign, deliveryStats: stats });
 });
 
 router.delete("/:id", async (req, res) => {

@@ -23,11 +23,9 @@ router.post("/subscribe", async (req, res) => {
   res.status(201).json({ id: subscriber.id, email: subscriber.email });
 });
 
-// DELETE /newsletter/unsubscribe?token=xxx — public. The token is the
-// subscriber's unique unsubscribeToken, embedded in every campaign email's
-// footer link (see emailService.sendMarketingCampaignBatch). The frontend's
-// /unsubscribe page is what learners actually click through to, and it
-// calls this endpoint on their behalf.
+// DELETE /newsletter/unsubscribe?token=xxx — public, the "real" mutating
+// endpoint. The frontend's /unsubscribe page calls this on the visitor's
+// behalf after they land there.
 router.delete("/unsubscribe", async (req, res) => {
   const parsed = z.object({ token: z.string().min(1) }).safeParse(req.query);
   if (!parsed.success) {
@@ -37,7 +35,26 @@ router.delete("/unsubscribe", async (req, res) => {
   res.json({ success: true });
 });
 
+// GET /newsletter/unsubscribe?token=xxx — same effect as the DELETE above,
+// public. A browser can only ever GET a link it clicks in an email, so this
+// alias exists for anything that hits the API URL directly rather than
+// going through the frontend's /unsubscribe confirmation page.
+router.get("/unsubscribe", async (req, res) => {
+  const parsed = z.object({ token: z.string().min(1) }).safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Missing or invalid token" });
+  }
+  await newsletterService.unsubscribeByToken(parsed.data.token);
+  res.json({ success: true });
+});
+
 router.use(authenticate, requireRole(...ADMIN_ROLES));
+
+// GET /newsletter/active-count — admin only. Used by the campaign composer
+// to preview how many people a send will reach before committing to it.
+router.get("/active-count", async (_req, res) => {
+  res.json({ count: await newsletterService.countActiveSubscribers() });
+});
 
 const listQuerySchema = z.object({
   search: z.string().optional(),

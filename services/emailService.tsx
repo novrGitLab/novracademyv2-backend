@@ -34,34 +34,50 @@ async function sendEmail(to: string, subject: string, react: ReactElement) {
  * Sends a marketing campaign's raw HTML to a batch of recipients via
  * Resend's batch API (max 100 per call, per Resend's limits — chunked here).
  * Each recipient gets their own unsubscribe link appended to the body.
+ *
+ * Returns sent/failed counts. Resend's batch API only reports success or
+ * failure per *chunk* (up to 100 recipients), not per individual recipient
+ * within a chunk — so a failed chunk counts all its recipients as failed.
+ * True per-recipient delivery status (bounced, etc.) would need Resend's
+ * webhook events, which aren't wired up here.
  */
 export async function sendMarketingCampaignBatch(
   recipients: { email: string; unsubscribeToken: string }[],
   subject: string,
   bodyHtml: string
-) {
+): Promise<{ sent: number; failed: number }> {
   const client = getResendClient();
   if (!client) {
     console.warn(`Skipping marketing campaign "${subject}" — RESEND_API_KEY is not configured.`);
-    return;
+    return { sent: 0, failed: recipients.length };
   }
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
   const BATCH_SIZE = 100;
+  let sent = 0;
+  let failed = 0;
 
   for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
     const chunk = recipients.slice(i, i + BATCH_SIZE);
-    await client.batch.send(
-      chunk.map((recipient) => ({
-        from: FROM,
-        to: recipient.email,
-        subject,
-        html: `${bodyHtml}<p style="margin-top:32px;font-size:12px;color:#6B7280">
-          <a href="${appUrl}/unsubscribe?token=${recipient.unsubscribeToken}">Unsubscribe</a>
-        </p>`,
-      }))
-    );
+    try {
+      await client.batch.send(
+        chunk.map((recipient) => ({
+          from: FROM,
+          to: recipient.email,
+          subject,
+          html: `${bodyHtml}<p style="margin-top:32px;font-size:12px;color:#6B7280">
+            <a href="${appUrl}/unsubscribe?token=${recipient.unsubscribeToken}">Unsubscribe</a>
+          </p>`,
+        }))
+      );
+      sent += chunk.length;
+    } catch (err) {
+      console.error("Marketing campaign batch failed:", err);
+      failed += chunk.length;
+    }
   }
+
+  return { sent, failed };
 }
 
 export async function sendEnrollmentConfirmedEmail(params: {

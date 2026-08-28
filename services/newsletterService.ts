@@ -69,6 +69,11 @@ export async function listSubscribers(params: { search?: string; page?: number; 
   return { subscribers, total, page, pageSize };
 }
 
+/** Used by the campaign composer to preview "this will reach N people" before sending. */
+export async function countActiveSubscribers() {
+  return prisma.newsletterSubscriber.count({ where: { status: NewsletterStatus.ACTIVE } });
+}
+
 export async function listAllActiveEmails() {
   return prisma.newsletterSubscriber.findMany({
     where: { status: NewsletterStatus.ACTIVE },

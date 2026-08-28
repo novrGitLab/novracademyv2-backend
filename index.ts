@@ -37,6 +37,7 @@ import newsletterRouter from "./routes/newsletter";
 import notificationsRouter from "./routes/notifications";
 import postsRouter from "./routes/posts";
 import reportsRouter from "./routes/reports";
+import storageRouter from "./routes/storage";
 import tenantsRouter from "./routes/tenants";
 import usersRouter from "./routes/users";
 import webhooksRouter from "./routes/webhooks";
@@ -94,6 +95,7 @@ app.use("/compliance", complianceRouter);
 app.use("/newsletter", newsletterRouter);
 app.use("/marketing-campaigns", marketingCampaignsRouter);
 app.use("/assessments", assessmentsRouter);
+app.use("/storage", storageRouter);
 app.use("/enrollment-codes", enrollmentCodesRouter);
 app.use("/enrollments", enrollmentRedeemRouter);
 

@@ -73,6 +73,10 @@ export async function deleteCampaign(id: string) {
  * Kicks off sending: marks the campaign SENT immediately (so the admin UI
  * reflects the action right away) and hands the actual delivery off to a
  * BullMQ job when Redis is configured, or does it inline otherwise.
+ *
+ * `stats` is only populated for an inline (non-queued) send, since a queued
+ * send happens after this call returns — the caller shows "sending in the
+ * background" instead when `stats` is null.
  */
 export async function sendCampaignNow(id: string) {
   const campaign = await getCampaign(id);
@@ -88,13 +92,14 @@ export async function sendCampaignNow(id: string) {
   });
 
   // Queue via BullMQ when Redis is configured; otherwise send inline now.
+  let stats: { sent: number; failed: number } | null = null;
   if (emailQueue) {
     await enqueueMarketingCampaignSend(id);
   } else {
-    await emailService.sendMarketingCampaignBatch(recipients, campaign.subject, campaign.bodyHtml);
+    stats = await emailService.sendMarketingCampaignBatch(recipients, campaign.subject, campaign.bodyHtml);
   }
 
-  return sent;
+  return { campaign: sent, stats };
 }
 
 /** Called by the email worker when a send was queued (see queues/emailWorker.ts). */
