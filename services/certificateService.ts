@@ -58,6 +58,30 @@ export async function issueCertificateForEnrollment(enrollmentId: string) {
 
   const issued = await renderAndUploadCertificatePdf(certificate.id);
   await enqueueCertificateIssuedEmail(issued.id);
+
+  // Award XP + notify for earning a certificate (idempotent — guarded by the
+  // "existing" check at the top, so this only runs on first issuance).
+  try {
+    const { awardXP, checkAndAwardBadges } = await import("./gamificationService");
+    await awardXP(enrollment.userId, 150, "certificate_earned", { courseId: enrollment.courseId, certUid: issued.certUid });
+    await checkAndAwardBadges(enrollment.userId);
+  } catch (err) {
+    console.error("Gamification failed on certificate issuance:", err);
+  }
+
+  try {
+    await prisma.notification.create({
+      data: {
+        userId: enrollment.userId,
+        type: "CERTIFICATE_ISSUED",
+        title: "Certificate earned!",
+        content: `Congratulations — you earned a certificate for ${enrollment.courseId ? "your completed course" : "your training"}.`,
+      },
+    });
+  } catch (err) {
+    console.error("Failed to create certificate notification:", err instanceof Error ? err.message : err);
+  }
+
   return issued;
 }
 

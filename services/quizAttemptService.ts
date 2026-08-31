@@ -108,6 +108,17 @@ export async function submitAttempt(params: SubmitAttemptParams) {
     courseProgressPct = updatedEnrollment.progressPct;
   }
 
+  // Award XP + check badges for passing a quiz (idempotent — once per pass).
+  if (passed) {
+    try {
+      const { awardXP, checkAndAwardBadges } = await import("./gamificationService");
+      await awardXP(userId, 50, "quiz_passed", { quizId: quiz.id, lessonId });
+      await checkAndAwardBadges(userId);
+    } catch (err) {
+      console.error("Gamification failed on quiz pass:", err);
+    }
+  }
+
   await enqueueQuizResultEmail(attempt.id);
 
   return {

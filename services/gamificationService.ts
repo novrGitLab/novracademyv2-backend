@@ -1,9 +1,24 @@
 import { prisma } from "@novr/db";
 import { Prisma } from "@prisma/client";
-import { REPUTATION_XP_THRESHOLDS } from "@novr/types";
+import { NotificationType, REPUTATION_XP_THRESHOLDS } from "@novr/types";
 import type { ReputationLevel } from "@novr/types";
 
 const LEVEL_ORDER: ReputationLevel[] = ["NEWCOMER", "MEMBER", "CONTRIBUTOR", "MENTOR", "LEGEND"];
+
+async function createAchievementNotification(userId: string, type: string, title: string, content: string) {
+  try {
+    await prisma.notification.create({
+      data: {
+        userId,
+        type: (type as NotificationType) ?? NotificationType.GENERAL,
+        title,
+        content,
+      },
+    });
+  } catch (err) {
+    console.error("Failed to create achievement notification:", err instanceof Error ? err.message : err);
+  }
+}
 
 /**
  * Awards XP to a user, creates an audit log entry, and promotes their
@@ -24,9 +39,10 @@ export async function awardXP(userId: string, amount: number, reason: string, me
 
 /**
  * Reads the user's current XP and promotes their reputationLevel if the
- * XP now meets a higher threshold. Levels only go up, never down.
+ * XP now meets a higher threshold. Levels only go up, never down. Returns
+ * the user's level (and whether it just changed) so callers can notify.
  */
-export async function updateLevel(userId: string) {
+export async function updateLevel(userId: string): Promise<{ level: ReputationLevel; changed: boolean }> {
   const user = await prisma.user.findUniqueOrThrow({
     where: { id: userId },
     select: { xp: true, reputationLevel: true },
@@ -39,9 +55,17 @@ export async function updateLevel(userId: string) {
     }
   }
 
-  if (newLevel !== user.reputationLevel) {
+  const changed = newLevel !== user.reputationLevel;
+  if (changed) {
     await prisma.user.update({ where: { id: userId }, data: { reputationLevel: newLevel } });
+    await createAchievementNotification(
+      userId,
+      NotificationType.LEVEL_UP,
+      "Level up!",
+      `You reached ${newLevel}. Keep it up!`
+    );
   }
+  return { level: newLevel, changed };
 }
 
 interface BadgeCondition {
@@ -116,6 +140,14 @@ export async function checkAndAwardBadges(userId: string) {
         ]);
         await updateLevel(userId);
       }
+      await createAchievementNotification(
+        userId,
+        NotificationType.BADGE_AWARDED,
+        "Badge unlocked!",
+        badge.description
+          ? `${badge.name} — ${badge.description}`
+          : `You earned the ${badge.name} badge!`
+      );
       awarded.push(badge.slug);
     } catch {
       // Unique constraint violation — badge already awarded (race condition). Ignore.

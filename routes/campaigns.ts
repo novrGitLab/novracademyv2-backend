@@ -24,6 +24,7 @@ function getOrgId(req: any): string | null {
 
 const createCampaignSchema = z.object({
   name: z.string().min(1),
+  sendingProfileId: z.string().optional().nullable(),
   employeeEmails: z
     .array(
       z.object({
@@ -51,28 +52,37 @@ router.post("/", requireRole(...ADMIN_ROLES), async (req, res) => {
     return res.status(400).json({ error: parsed.error.flatten() });
   }
 
-  const { name, employeeEmails, templateHtml, landingPageHtml } = parsed.data;
+  const { name, sendingProfileId, employeeEmails, templateHtml, landingPageHtml } = parsed.data;
   const campaignUrl = process.env.GOPHISH_CAMPAIGN_URL ?? "http://172.236.25.61:3005";
   const timestamp = Date.now();
 
-  // Scope target lookup to organization users
+  // Resolve target emails. Emails matching existing users (in any org) are
+  // linked to their user record; unknown emails still become targets so a
+  // campaign can be launched at anyone.
   const targetEmails = employeeEmails.map((e) => e.email.toLowerCase());
-  const users = await prisma.user.findMany({ where: { email: { in: targetEmails }, organizationId: orgId } });
+  const users = await prisma.user.findMany({ where: { email: { in: targetEmails } } });
   const userByEmail = new Map(users.map((u) => [u.email.toLowerCase(), u]));
-  const missing = targetEmails.filter((e) => !userByEmail.has(e));
-  if (missing.length > 0) {
-    return res.status(400).json({
-      error: "Some target emails are not members of your organization",
-      emails: missing,
-    });
-  }
-  const targets = [...userByEmail.values()].map((u) => {
-    const [first, ...rest] = (u.name ?? "").split(" ").filter(Boolean);
+
+  const targets = targetEmails.map((email) => {
+    const u = userByEmail.get(email);
+    if (u) {
+      const [first, ...rest] = (u.name ?? "").split(" ").filter(Boolean);
+      return {
+        email: u.email,
+        firstName: first || email.split("@")[0],
+        lastName: rest.join(" "),
+        userId: u.id,
+      };
+    }
+    // Unknown email — no user record, firstName derived from the address.
+    const [first, ...rest] = (employeeEmails.find((e) => e.email.toLowerCase() === email)?.firstName ?? "")
+      .split(" ")
+      .filter(Boolean);
     return {
-      email: u.email,
-      firstName: first || u.email.split("@")[0],
+      email,
+      firstName: first || email.split("@")[0],
       lastName: rest.join(" "),
-      userId: u.id,
+      userId: null,
     };
   });
 
@@ -83,18 +93,40 @@ router.post("/", requireRole(...ADMIN_ROLES), async (req, res) => {
   const groupName = `${name}-targets-${timestamp}`;
 
   try {
-    // 1. Fetch org's sender config for phishing emails
+    // 1. Resolve the sender: prefer the admin's selected sending profile,
+    // then the org's sender config, then the shared relay / global default.
     const org = await prisma.organization.findUnique({
       where: { id: orgId },
       select: { senderName: true, senderEmail: true, name: true },
     });
-    const senderDisplay = org?.senderName || org?.name || "Security Team";
-    const senderAddress = org?.senderEmail || process.env.GOPHISH_SMTP_FROM_ADDRESS || "security@novracademy.com";
+
+    let senderDisplay = org?.senderName || org?.name || "Security Team";
+    let senderAddress = (
+      org?.senderEmail ||
+      process.env.GOPHISH_SMTP_USERNAME ||
+      process.env.GOPHISH_SMTP_FROM_ADDRESS ||
+      "security@novracademy.com"
+    ).trim();
+
+    if (sendingProfileId) {
+      const profile = await prisma.sendingProfile.findUnique({ where: { id: sendingProfileId } });
+      if (profile) {
+        if (profile.senderName) senderDisplay = profile.senderName;
+        if (profile.senderEmail) senderAddress = profile.senderEmail;
+      }
+    }
+    // Strip any "Display Name <email>" wrapper and keep the bare address.
+    const angleMatch = senderAddress.match(/<([^>]+)>/);
+    if (angleMatch) senderAddress = angleMatch[1].trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(senderAddress)) {
+      senderAddress = process.env.GOPHISH_SMTP_USERNAME ?? "security@novracademy.com";
+    }
 
     // 2. Create GoPhish resources sequentially (with logging)
     console.log("GoPhish: Creating sending profile...");
     const smtpRes = await gophish.createSendingProfile(smtpName, {
-      fromAddress: `${senderDisplay} <${senderAddress}>`,
+      fromAddress: senderAddress,
+      senderName: senderDisplay,
     });
     const smtpData = smtpRes.data?.data || smtpRes.data;
     console.log("GoPhish: SMTP created:", smtpData?.id);
