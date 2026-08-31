@@ -25,17 +25,21 @@ const createLabSchema = z.object({
   organizationId: z.string().nullable().optional(),
 });
 
-// GET /labs — list labs for the employee's org + global labs
+// GET /labs — admins see all labs; learners see their org's labs + global
+// labs. Learners with no org (null) see every lab so they aren't locked out.
 router.get("/", async (req, res) => {
   const orgId = getOrgId(req);
   const userId = req.user!.id;
+  const isAdmin = ADMIN_ROLES.includes(req.user!.role);
 
-  const where = {
-    OR: [
-      { organizationId: orgId },
-      { organizationId: null },
-    ],
-  };
+  const where = isAdmin || !orgId
+    ? undefined
+    : {
+        OR: [
+          { organizationId: orgId },
+          { organizationId: null },
+        ],
+      };
 
   const [labs, solves] = await Promise.all([
     prisma.lab.findMany({
@@ -95,6 +99,18 @@ router.get("/:labId", async (req, res) => {
   });
 });
 
+// GET /labs/templates — list available lab templates from the Lab Agent.
+// The admin UI uses this to populate the labTemplateId selector so admins
+// can't create a lab pointing at a non-existent template.
+router.get("/templates", requireRole(...ADMIN_ROLES), async (_req, res) => {
+  try {
+    const templates = await labAgent.listLabTemplates();
+    res.json({ templates });
+  } catch (err: any) {
+    res.status(503).json({ error: `Lab Agent is unreachable: ${err.message}` });
+  }
+});
+
 // POST /labs — create a lab (admin only)
 router.post("/", requireRole(...ADMIN_ROLES), async (req, res) => {
   const parsed = createLabSchema.safeParse(req.body);
@@ -104,6 +120,26 @@ router.post("/", requireRole(...ADMIN_ROLES), async (req, res) => {
 
   const { name, category, description, flag, labTemplateId, points, organizationId } = parsed.data;
   const userRole = req.user!.role;
+
+  // Validate that a matching template exists on the Lab Agent so the
+  // admin can't create a lab pointing at a template that doesn't exist
+  // (which would later fail at Start Lab with a confusing 404). We
+  // surface a 400 with the list of available templates when the agent
+  // is reachable, so the admin can correct the field inline. If the
+  // agent is unreachable we allow the lab to be created (the Start Lab
+  // call will fail later with a clear error) rather than locking the
+  // admin out of lab management when the VPS is down.
+  try {
+    const templates = await labAgent.listLabTemplates();
+    if (templates.length > 0 && !templates.includes(labTemplateId)) {
+      return res.status(400).json({
+        error: `No lab template found on the Lab Agent for "${labTemplateId}". Available templates: ${templates.join(", ")}. Set labTemplateId to one of these (or create the template at /root/lab-templates/${labTemplateId}/docker-compose.yml on the VPS).`,
+        availableTemplates: templates,
+      });
+    }
+  } catch {
+    // Lab Agent unreachable — allow creation; Start Lab will surface the error.
+  }
 
   // Determine which org this lab belongs to
   let targetOrgId: string | null = null;
@@ -253,6 +289,16 @@ router.post("/:labId/submit", async (req, res) => {
         labSessionId: sessionId || null,
       },
     });
+
+    // Award XP + check badges on first solve.
+    try {
+      const { awardXP, checkAndAwardBadges } = await import("../services/gamificationService");
+      await awardXP(userId, lab.points || 50, "lab_solved", { labId });
+      await checkAndAwardBadges(userId);
+    } catch (err) {
+      console.error("Gamification failed on lab solve:", err);
+    }
+
     res.json({ correct: true, alreadySolved: false, points: lab.points });
   } catch (err: any) {
     // P2002 = unique constraint violation — already solved

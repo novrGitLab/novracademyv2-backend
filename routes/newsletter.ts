@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { prisma } from "@novr/db";
 import { ADMIN_ROLES } from "@novr/types";
 import { authenticate, requireRole } from "../middleware/auth";
 import * as newsletterService from "../services/newsletterService";
@@ -46,6 +47,33 @@ router.get("/unsubscribe", async (req, res) => {
   }
   await newsletterService.unsubscribeByToken(parsed.data.token);
   res.json({ success: true });
+});
+
+// GET /newsletter/digests — any authenticated user. Returns marketing
+// campaigns that have actually been sent, for the community "Email &
+// Newsletters" page (which previously showed static mock data).
+router.get("/digests", authenticate, async (_req, res) => {
+  const digests = await prisma.marketingCampaign.findMany({
+    where: { status: "SENT" },
+    orderBy: { sentAt: "desc" },
+    select: {
+      id: true,
+      subject: true,
+      bodyHtml: true,
+      scheduledAt: true,
+      sentAt: true,
+      recipientCount: true,
+    },
+  });
+  res.json({
+    digests: digests.map((d) => ({
+      id: d.id,
+      subject: d.subject,
+      preview: (d.bodyHtml ?? "").replace(/<[^>]*>/g, "").slice(0, 180),
+      date: d.sentAt?.toISOString() ?? d.scheduledAt?.toISOString(),
+      recipientCount: d.recipientCount ?? 0,
+    })),
+  });
 });
 
 router.use(authenticate, requireRole(...ADMIN_ROLES));

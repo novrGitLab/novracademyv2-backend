@@ -16,14 +16,42 @@ export interface ItfEstimate {
   estimatedAmountNgn: number;
 }
 
+/**
+ * Per-category hourly reimbursement rates (NGN per trainee-hour). These are
+ * configurable via ITF_CATEGORY_RATES (comma-separated `CATEGORY:rate` pairs)
+ * so they can be aligned with the current ITF schedule without a redeploy.
+ * Defaults mirror the commonly used banded ITF rates.
+ */
+const DEFAULT_CATEGORY_RATES: Record<string, number> = {
+  MANAGEMENT: 2500,
+  SUPERVISORY: 1800,
+  OPERATIVE: 1200,
+  LD_PERSONNEL: 900,
+  HSE: 1600,
+  SIWES: 700,
+};
+
+function loadCategoryRates(): Record<string, number> {
+  const raw = process.env.ITF_CATEGORY_RATES;
+  if (!raw) return DEFAULT_CATEGORY_RATES;
+  const rates: Record<string, number> = {};
+  for (const pair of raw.split(",")) {
+    const [cat, rate] = pair.split(":").map((s) => s.trim());
+    if (cat && rate && !Number.isNaN(Number(rate))) rates[cat.toUpperCase()] = Number(rate);
+  }
+  return { ...DEFAULT_CATEGORY_RATES, ...rates };
+}
+
 export function computeItfEstimate(
   categories: { category: string; trainees: number; hours: number }[],
   headcount: number | null
 ): ItfEstimate {
-  const totalTrainees = categories.reduce((sum, c) => sum + c.trainees, 0);
-  const totalHours = categories.reduce((sum, c) => sum + c.hours, 0);
-  const baseCostPerTraineeHour = 1200;
-  const estimatedAmountNgn = Math.round(totalTrainees * totalHours * baseCostPerTraineeHour);
+  const rates = loadCategoryRates();
+  let estimatedAmountNgn = 0;
+  for (const c of categories) {
+    const rate = rates[c.category.toUpperCase()] ?? DEFAULT_CATEGORY_RATES.OPERATIVE;
+    estimatedAmountNgn += Math.round(c.trainees * c.hours * rate);
+  }
   return { estimatedAmountNgn };
 }
 
@@ -47,6 +75,12 @@ export interface ItfPreviewData {
   }[];
   categories: { category: string; trainees: number; hours: number }[];
   warnings: string[];
+  estimate: {
+    estimatedAmountNgn: number;
+    pctTrained: number;
+    awardPct: number;
+    perCategory: { category: string; trainees: number; hours: number; pctTrained: number; awardPct: number; reclaimEstimate: number }[];
+  };
 }
 
 async function getEnrollmentsForYear(organizationId: string | null, trainingYear: number) {
@@ -143,6 +177,26 @@ export async function getItfPreview(organizationId: string | null, trainingYear:
   const totalHours = courses.reduce((sum, c) => sum + c.hours * c.enrolled, 0);
   const totalCostNgn = enrollments.reduce((sum, e) => sum + Math.round(e.course.priceCents / 100), 0);
 
+  // Build the per-category award roll-up + overall estimate the UI shows.
+  const perCategory = categories.map((c) => {
+    const headcount = org?.itfEmployeeHeadcount ?? 0;
+    const pctTrained = headcount > 0 ? Math.min(100, Math.round((c.trainees / headcount) * 100)) : 0;
+    // Standard ITF award bands by % trained (roughly mirrors the TR-2A scheme).
+    const awardPct = pctTrained >= 90 ? 100 : pctTrained >= 70 ? 80 : pctTrained >= 50 ? 60 : pctTrained >= 30 ? 40 : pctTrained > 0 ? 20 : 0;
+    const rates = loadCategoryRates();
+    const rate = rates[c.category.toUpperCase()] ?? DEFAULT_CATEGORY_RATES.OPERATIVE;
+    const reclaimEstimate = Math.round(c.trainees * c.hours * rate * (awardPct / 100));
+    return { ...c, pctTrained, awardPct, reclaimEstimate };
+  });
+
+  const estimate = computeItfEstimate(categories, org?.itfEmployeeHeadcount ?? null);
+  const overallTrainedPct =
+    org?.itfEmployeeHeadcount && org.itfEmployeeHeadcount > 0
+      ? Math.min(100, Math.round((uniqueTrainees / org.itfEmployeeHeadcount) * 100))
+      : 0;
+  const overallAwardPct =
+    overallTrainedPct >= 90 ? 100 : overallTrainedPct >= 70 ? 80 : overallTrainedPct >= 50 ? 60 : overallTrainedPct >= 30 ? 40 : overallTrainedPct > 0 ? 20 : 0;
+
   return {
     year: trainingYear,
     orgName: org?.name ?? "Unknown",
@@ -155,6 +209,12 @@ export async function getItfPreview(organizationId: string | null, trainingYear:
     courses,
     categories,
     warnings,
+    estimate: {
+      estimatedAmountNgn: estimate.estimatedAmountNgn,
+      pctTrained: overallTrainedPct,
+      awardPct: overallAwardPct,
+      perCategory,
+    },
   };
 }
 

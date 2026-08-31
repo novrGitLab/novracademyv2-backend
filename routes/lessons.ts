@@ -161,8 +161,8 @@ router.post("/:lessonId/pdf/upload-url", requireRole(...ADMIN_ROLES), async (req
   if (!lesson || lesson.courseId !== courseIdOf(req)) {
     throw new NotFoundError("Lesson not found");
   }
-  if (lesson.type !== LessonType.PDF) {
-    return res.status(400).json({ error: "Lesson is not a PDF lesson" });
+  if (lesson.type !== LessonType.PDF && lesson.type !== LessonType.SLIDES) {
+    return res.status(400).json({ error: "Only PDF and Slides lessons support PDF uploads" });
   }
 
   const result = await r2Service.createPdfUploadUrl(lesson.id);
@@ -181,7 +181,7 @@ router.get("/:lessonId/pdf/view-url", async (req, res) => {
   if (!lesson || lesson.courseId !== courseIdOf(req)) {
     throw new NotFoundError("Lesson not found");
   }
-  if (lesson.type !== LessonType.PDF || !lesson.contentUrl) {
+  if ((lesson.type !== LessonType.PDF && lesson.type !== LessonType.SLIDES) || !lesson.contentUrl) {
     return res.status(400).json({ error: "Lesson has no uploaded PDF" });
   }
 
@@ -202,6 +202,13 @@ router.get("/:lessonId/pdf/view-url", async (req, res) => {
 // the PDF as read (called once the viewer reaches the last page).
 router.post("/:lessonId/pdf/complete", async (req, res) => {
   const progress = await progressService.markPdfLessonComplete(req.user!.id, courseIdOf(req), req.params.lessonId);
+  res.json(progress);
+});
+
+// POST /courses/:courseId/lessons/:lessonId/slides/complete — learner marks
+// a slides deck as viewed. Slide lessons complete on viewing, like PDFs.
+router.post("/:lessonId/slides/complete", async (req, res) => {
+  const progress = await progressService.markViewedLessonComplete(req.user!.id, courseIdOf(req), req.params.lessonId);
   res.json(progress);
 });
 
@@ -443,9 +450,10 @@ router.post("/:lessonId/reorder", requireRole(...ADMIN_ROLES), async (req, res) 
 });
 
 // POST /courses/:courseId/lessons/:lessonId/slides/generate — admin only.
-// Triggers PDF→slides conversion for a PDF lesson.
+// Triggers PDF→slides conversion for a Slides lesson (or a PDF lesson).
+// The lesson must have a PDF uploaded as its content.
 const generateSlidesSchema = z.object({
-  slideCount: z.number().int().min(5).max(20).default(10),
+  slideCount: z.number().int().min(1).max(20).default(10),
   voiceover: z.boolean().default(false),
 });
 
@@ -459,11 +467,11 @@ router.post("/:lessonId/slides/generate", requireRole(...ADMIN_ROLES), async (re
   if (!lesson || lesson.courseId !== courseIdOf(req)) {
     throw new NotFoundError("Lesson not found");
   }
-  if (lesson.type !== LessonType.PDF) {
-    return res.status(400).json({ error: "Only PDF lessons can generate slides" });
+  if (lesson.type !== LessonType.PDF && lesson.type !== LessonType.SLIDES) {
+    return res.status(400).json({ error: "Only PDF and Slides lessons can generate slides" });
   }
   if (!lesson.contentUrl) {
-    return res.status(400).json({ error: "PDF lesson has no file uploaded" });
+    return res.status(400).json({ error: "Lesson has no PDF uploaded yet" });
   }
 
   const generation = await slidesGenerationService.createSlidesGeneration(

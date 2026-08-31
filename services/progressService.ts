@@ -102,6 +102,15 @@ export async function recalculateEnrollmentProgress(enrollmentId: string, course
 
   if (justCompletedCourse) {
     await enqueueCertificateGeneration(enrollmentId);
+
+    // Award XP + check badges on first course completion.
+    try {
+      const { awardXP, checkAndAwardBadges } = await import("./gamificationService");
+      await awardXP(enrollment.userId, 200, "course_completed", { courseId });
+      await checkAndAwardBadges(enrollment.userId);
+    } catch (err) {
+      console.error("Gamification failed on course completion:", err);
+    }
   }
 
   return updated;
@@ -203,6 +212,52 @@ export async function markPdfLessonComplete(userId: string, courseId: string, le
   if (!lesson || lesson.courseId !== courseId) throw new NotFoundError("Lesson not found");
   if (lesson.type !== LessonType.PDF) {
     throw new InvalidLessonTypeError("This operation only applies to PDF lessons");
+  }
+
+  const progressOverview = await getCourseProgress(userId, courseId);
+  const entry = progressOverview.lessons.find((l) => l.lessonId === lessonId);
+  if (!entry?.unlocked) throw new LessonLockedError();
+
+  const progress = await prisma.lessonProgress.upsert({
+    where: { enrollmentId_lessonId: { enrollmentId: enrollment.id, lessonId } },
+    create: {
+      userId,
+      lessonId,
+      enrollmentId: enrollment.id,
+      watchPct: 100,
+      completed: true,
+      completedAt: new Date(),
+    },
+    update: entry.completed
+      ? {}
+      : {
+          watchPct: 100,
+          completed: true,
+          completedAt: new Date(),
+        },
+  });
+
+  if (!entry.completed) {
+    const updatedEnrollment = await recalculateEnrollmentProgress(enrollment.id, courseId);
+    return { ...progress, courseProgressPct: updatedEnrollment.progressPct };
+  }
+  return { ...progress, courseProgressPct: enrollment.progressPct };
+}
+
+/**
+ * Marks a "viewed"-based lesson complete — SLIDES decks, and any future
+ * lesson type that completes simply by being seen. Mirrors
+ * markPdfLessonComplete: enrollment + unlock enforced, client trusted on
+ * "did they view it".
+ */
+export async function markViewedLessonComplete(userId: string, courseId: string, lessonId: string) {
+  const enrollment = await getActiveEnrollment(userId, courseId);
+  if (!enrollment) throw new NotEnrolledError();
+
+  const lesson = await prisma.lesson.findUnique({ where: { id: lessonId } });
+  if (!lesson || lesson.courseId !== courseId) throw new NotFoundError("Lesson not found");
+  if (lesson.type !== LessonType.SLIDES && lesson.type !== LessonType.PDF) {
+    throw new InvalidLessonTypeError("This operation only applies to viewed lessons (slides/PDF)");
   }
 
   const progressOverview = await getCourseProgress(userId, courseId);

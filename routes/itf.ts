@@ -1,8 +1,10 @@
 import { Router } from "express";
+import { z } from "zod";
 import { prisma } from "@novr/db";
 import { UserRole, ADMIN_ROLES } from "@novr/types";
 import { authenticate, requireRole } from "../middleware/auth";
 import * as itf from "../services/itfExportService";
+import * as itfClaim from "../services/itfClaimService";
 
 const router = Router();
 router.use(authenticate);
@@ -74,6 +76,113 @@ router.get("/audit", requireRole(...ADMIN_ROLES), async (req, res) => {
     take: 20,
   });
   res.json({ exports });
+});
+
+// ── ITF Claims ────────────────────────────────────────────────────────────
+
+function requireOrgId(req: any, res: any): string | null {
+  const orgId = getOrgId(req);
+  if (!orgId) {
+    res.status(400).json({ error: "No organization associated with your account" });
+    return null;
+  }
+  return orgId;
+}
+
+function parseYearParam(value: string): number | null {
+  const year = parseInt(value, 10);
+  if (isNaN(year) || year < 2000 || year > new Date().getFullYear()) return null;
+  return year;
+}
+
+// GET /itf/claims — list all claims for the org.
+router.get("/claims", requireRole(...ADMIN_ROLES), async (req, res) => {
+  const orgId = requireOrgId(req, res);
+  if (!orgId) return;
+  const claims = await itfClaim.listClaims(orgId);
+  res.json({ claims });
+});
+
+// GET /itf/claims/:year — get-or-create the draft claim for a training year.
+// The UI calls this when "Start a Claim" is clicked.
+router.get("/claims/:year", requireRole(...ADMIN_ROLES), async (req, res) => {
+  const orgId = requireOrgId(req, res);
+  if (!orgId) return;
+  const year = parseYearParam(req.params.year);
+  if (year === null) return res.status(400).json({ error: "Invalid training year" });
+
+  const claim = await itfClaim.getOrCreateDraftClaim(orgId, year, req.user!.id);
+  res.json({ claim });
+});
+
+// POST /itf/claims/:year/submit — submit a DRAFT claim with an ITF reference.
+router.post("/claims/:year/submit", requireRole(...ADMIN_ROLES), async (req, res) => {
+  const orgId = requireOrgId(req, res);
+  if (!orgId) return;
+  const year = parseYearParam(req.params.year);
+  if (year === null) return res.status(400).json({ error: "Invalid training year" });
+
+  const parsed = z
+    .object({
+      itfReference: z.string().min(1).optional(),
+      submittedAt: z.coerce.date().optional(),
+      submissionNotes: z.string().nullable().optional(),
+    })
+    .safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const claim = await itfClaim.submitClaim(orgId, year, parsed.data, req.user!.id);
+  res.json({ claim });
+});
+
+// POST /itf/claims/:year/approve — approve a SUBMITTED claim.
+router.post("/claims/:year/approve", requireRole(...ADMIN_ROLES), async (req, res) => {
+  const orgId = requireOrgId(req, res);
+  if (!orgId) return;
+  const year = parseYearParam(req.params.year);
+  if (year === null) return res.status(400).json({ error: "Invalid training year" });
+
+  const parsed = z
+    .object({
+      approvedAmountNgn: z.number().min(0).optional(),
+      approvedAt: z.coerce.date().optional(),
+      approvalNotes: z.string().nullable().optional(),
+    })
+    .safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const claim = await itfClaim.approveClaim(orgId, year, parsed.data, req.user!.id);
+  res.json({ claim });
+});
+
+// POST /itf/claims/:year/reject — reject a SUBMITTED claim.
+router.post("/claims/:year/reject", requireRole(...ADMIN_ROLES), async (req, res) => {
+  const orgId = requireOrgId(req, res);
+  if (!orgId) return;
+  const year = parseYearParam(req.params.year);
+  if (year === null) return res.status(400).json({ error: "Invalid training year" });
+
+  const parsed = z
+    .object({
+      rejectionReason: z.string().min(1).optional(),
+      rejectedAt: z.coerce.date().optional(),
+    })
+    .safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const claim = await itfClaim.rejectClaim(orgId, year, parsed.data, req.user!.id);
+  res.json({ claim });
+});
+
+// POST /itf/claims/:year/reopen — reopen an APPROVED/REJECTED claim to DRAFT.
+router.post("/claims/:year/reopen", requireRole(...ADMIN_ROLES), async (req, res) => {
+  const orgId = requireOrgId(req, res);
+  if (!orgId) return;
+  const year = parseYearParam(req.params.year);
+  if (year === null) return res.status(400).json({ error: "Invalid training year" });
+
+  const claim = await itfClaim.reopenClaim(orgId, year, req.user!.id);
+  res.json({ claim });
 });
 
 export default router;

@@ -53,3 +53,24 @@ export async function getLabStatus(sessionId: string): Promise<StatusResponse> {
   const res = await client.get<StatusResponse>(`/status/${sessionId}`);
   return res.data;
 }
+
+/**
+ * Asks the Lab Agent which lab templates are available. Falls back to
+ * a comma-separated list from `LAB_TEMPLATES_LIST` if the agent doesn't
+ * expose a /templates route (older agent builds) or is unreachable.
+ */
+export async function listLabTemplates(): Promise<string[]> {
+  try {
+    const res = await client.get<string[]>("/templates");
+    return res.data;
+  } catch (err: any) {
+    if (err?.response?.status === 404) {
+      const fallback = (process.env.LAB_TEMPLATES_LIST ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      return fallback;
+    }
+    throw err;
+  }
+}

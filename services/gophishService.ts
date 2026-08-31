@@ -35,7 +35,8 @@ export async function createSendingProfile(name: string, options?: { fromAddress
   const smtpPort = process.env.GOPHISH_SMTP_PORT ?? "1025";
   const host = smtpHost.includes(":") ? smtpHost : `${smtpHost}:${smtpPort}`;
 
-  // Use org's from address if provided, otherwise fall back to global config
+  // GoPhish requires `from_address` to be a bare email address — a
+  // "Display Name <email>" string is rejected as invalid.
   const fromAddress = options?.fromAddress ?? process.env.GOPHISH_SMTP_FROM_ADDRESS ?? "security@novracademy.com";
 
   const res = await client.post("/smtp/", {

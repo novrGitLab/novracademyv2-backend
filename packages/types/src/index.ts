@@ -174,6 +174,8 @@ export const NotificationType = {
   COMMUNITY_MENTION: "COMMUNITY_MENTION",
   DM_RECEIVED: "DM_RECEIVED",
   EVENT_REMINDER: "EVENT_REMINDER",
+  BADGE_AWARDED: "BADGE_AWARDED",
+  LEVEL_UP: "LEVEL_UP",
   GENERAL: "GENERAL",
 } as const;
 export type NotificationType = (typeof NotificationType)[keyof typeof NotificationType];
