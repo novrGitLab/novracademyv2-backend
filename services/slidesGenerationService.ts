@@ -506,7 +506,12 @@ async function triggerSlidesGeneration(generationId: string) {
       console.warn("[slides] composited fallback failed, deck has no slide images:", err instanceof Error ? err.message : err);
     }
   }
-  if (!render || slideImages.length === 0) {
+  // A deck is usable when it has raster slide images OR a valid composited
+  // render spec (positioned text + images). Composited decks legitimately
+  // have zero PNGs — `slideImages` staying empty is not a failure on its own.
+  const hasRaster = slideImages.length > 0;
+  const hasComposited = !!render && render.slides.length > 0;
+  if (!hasRaster && !hasComposited) {
     throw new Error("No slide images could be produced for the generated deck");
   }
 
