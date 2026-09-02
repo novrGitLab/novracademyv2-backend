@@ -1,4 +1,6 @@
 import axios from "axios";
+import http from "http";
+import https from "https";
 
 /**
  * Thin client over the deployed pdf-to-slides service. The service owns the
@@ -124,8 +126,15 @@ export async function generateDeckFromPDF(
   const deckId = submitData.deckId;
 
   // 2. Poll until the deck is completed (or failed / max wait reached).
+  //    The status endpoint is idempotent and cheap, and the deck keeps being
+  //    processed server-side even if our connection drops (ECONNRESET, keep-
+  //    alive socket closed by a service restart, timeout, transient 5xx).
+  //    We therefore tolerate up to POLL_MAX_CONSECUTIVE_ERRORS failures in a
+  //    row and only give up if the status endpoint is persistently down.
   const deadline = Date.now() + PDF_TO_SLIDES_MAX_WAIT_MS;
+  const POLL_MAX_CONSECUTIVE_ERRORS = 8;
   let status = submitData.status ?? "queued";
+  let consecutiveErrors = 0;
   while (status !== "completed") {
     if (Date.now() > deadline) {
       throw new Error(`pdf-to-slides generation timed out after ${Math.round(PDF_TO_SLIDES_MAX_WAIT_MS / 60000)} min (deck ${deckId})`);
@@ -135,19 +144,29 @@ export async function generateDeckFromPDF(
       const statusResponse = await axios.get(`${PDF_TO_SLIDES_URL}/api/decks/${encodeURIComponent(deckId)}/status`, {
         headers: authHeaders(),
         timeout: 30_000,
+        // Fresh socket per poll: avoids ECONNRESET on a reused keep-alive
+        // connection that the remote closed (e.g. a service restart).
+        httpAgent: new http.Agent({ keepAlive: false }),
+        httpsAgent: new https.Agent({ keepAlive: false }),
       });
       const data = statusResponse.data as { status?: string; error?: string | null };
       status = data.status ?? "processing";
+      consecutiveErrors = 0;
       if (status === "failed") {
         throw new Error(`pdf-to-slides generation failed: ${data.error ?? "unknown error"}`);
       }
     } catch (err) {
       // 404 while queued/processing means status.json hasn't been written yet
-      // (harmless race) — keep polling. Other errors abort after a few tries.
+      // (harmless race). Connection resets / timeouts / 5xx are transient —
+      // the deck is still processing server-side. Only abort when the status
+      // endpoint fails repeatedly (it would then be genuinely unreachable).
       if (axios.isAxiosError(err) && err.response?.status === 404) {
         continue;
       }
-      throw err;
+      consecutiveErrors += 1;
+      if (consecutiveErrors >= POLL_MAX_CONSECUTIVE_ERRORS) {
+        throw err;
+      }
     }
   }
 
