@@ -184,6 +184,25 @@ export async function updateUser(id: string, input: UpdateUserInput) {
   });
 }
 
+/**
+ * Deletes a user. Because users have many non-cascading relations
+ * (enrollments, certificates, community memberships, …), a hard delete would
+ * 500 on any user who has engaged with the platform. We therefore perform a
+ * soft delete: anonymize the account and suspend it so it can no longer sign
+ * in, while preserving audit/history records that reference the user.
+ */
 export async function deleteUser(id: string) {
-  await prisma.user.delete({ where: { id } });
+  const suffix = `deleted_${Date.now()}`;
+  await prisma.user.update({
+    where: { id },
+    data: {
+      status: UserStatus.SUSPENDED,
+      name: "Deleted user",
+      email: `deleted_${suffix}@invalid.local`,
+      // Release the unique public slug if one was set.
+      publicProfileSlug: id,
+      passwordHash: null,
+      openToWork: false,
+    },
+  });
 }
