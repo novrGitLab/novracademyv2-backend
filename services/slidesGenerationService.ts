@@ -527,7 +527,12 @@ async function triggerSlidesGeneration(generationId: string) {
         slides: generation.slideCount,
         filename: `${lesson.title.replace(/[^a-zA-Z0-9]+/g, "-") || "document"}.pdf`,
       }),
-    { label: "pdf-to-slides upload", retries: 2 }
+    // One retry max. The deck pipeline is 5–8 min with voiceover and each
+    // retry re-runs the whole generation on the remote, so a second retry
+    // (a) more than doubles wall time and (b) creates duplicate decks on
+    // the service. The remote request timeout (PDF_TO_SLIDES_TIMEOUT_MS)
+    // must comfortably exceed the deck time + queueing.
+    { label: "pdf-to-slides upload", retries: 1 }
   );
 
   await prisma.slidesGeneration.update({ where: { id: generationId }, data: { deckId: deck.deckId } });
