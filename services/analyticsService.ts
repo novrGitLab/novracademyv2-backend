@@ -257,3 +257,106 @@ export async function getRevenueSummary() {
     recentTransactions: transactions,
   };
 }
+
+// ---------------------------------------------------------------------
+// 30. Platform analytics (Super Admin)
+// ---------------------------------------------------------------------
+
+function monthKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/** Real platform-wide numbers for the Super Admin analytics dashboard. */
+export async function getPlatformAnalytics() {
+  const now = new Date();
+  const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const last6Months: string[] = [];
+  for (let i = 5; i >= 0; i--) {
+    last6Months.push(monthKey(new Date(now.getFullYear(), now.getMonth() - i, 1)));
+  }
+
+  const [
+    orgsByMonth,
+    totalOrgs,
+    totalUsers,
+    usersByMemberType,
+    activeEnrollments,
+    certificatesIssued,
+    revenueThisMonth,
+    revenueLastMonth,
+    revenueAllTime,
+    revenueByProvider,
+    paymentsByMonth,
+    orgsWithUsers,
+  ] = await Promise.all([
+    // Tenants (organizations) created per month over the last 6 months.
+    prisma.organization.findMany({ where: { createdAt: { gte: new Date(startOfLastMonth.getTime() - 5 * 30 * DAY_MS) } }, select: { createdAt: true } }),
+    prisma.organization.count(),
+    prisma.user.count(),
+    prisma.user.groupBy({ by: ["memberType"], _count: true }),
+    prisma.enrollment.count({ where: { status: EnrollmentStatus.ACTIVE } }),
+    prisma.certificate.count(),
+    prisma.payment.aggregate({
+      where: { status: PaymentStatus.SUCCEEDED, createdAt: { gte: startOfThisMonth } },
+      _sum: { amountCents: true },
+    }),
+    prisma.payment.aggregate({
+      where: { status: PaymentStatus.SUCCEEDED, createdAt: { gte: startOfLastMonth, lt: startOfThisMonth } },
+      _sum: { amountCents: true },
+    }),
+    prisma.payment.aggregate({ where: { status: PaymentStatus.SUCCEEDED }, _sum: { amountCents: true } }),
+    prisma.payment.groupBy({
+      by: ["provider"],
+      where: { status: PaymentStatus.SUCCEEDED },
+      _sum: { amountCents: true },
+    }),
+    prisma.payment.findMany({
+      where: { status: PaymentStatus.SUCCEEDED, createdAt: { gte: new Date(now.getFullYear(), now.getMonth() - 5, 1) } },
+      select: { amountCents: true, createdAt: true },
+    }),
+    prisma.organization.findMany({ select: { id: true, name: true, _count: { select: { users: true } } } }),
+  ]);
+
+  // Tenant growth: count orgs created within each of the last 6 months.
+  const tenantGrowthByMonth: Record<string, number> = Object.fromEntries(last6Months.map((m) => [m, 0]));
+  for (const org of orgsByMonth) {
+    const key = monthKey(org.createdAt);
+    if (key in tenantGrowthByMonth) tenantGrowthByMonth[key] += 1;
+  }
+
+  // Revenue trend by month (last 6 months), converted to dollars.
+  const revenueByMonth: Record<string, number> = Object.fromEntries(last6Months.map((m) => [m, 0]));
+  for (const p of paymentsByMonth) {
+    const key = monthKey(p.createdAt);
+    if (key in revenueByMonth) revenueByMonth[key] += p.amountCents;
+  }
+
+  const revenueThis = revenueThisMonth._sum.amountCents ?? 0;
+  const revenueLast = revenueLastMonth._sum.amountCents ?? 0;
+  const momGrowthPct = revenueLast > 0 ? ((revenueThis - revenueLast) / revenueLast) * 100 : revenueThis > 0 ? 100 : 0;
+
+  return {
+    totals: {
+      organizations: totalOrgs,
+      users: totalUsers,
+      activeEnrollments,
+      certificatesIssued,
+      revenueAllTimeCents: revenueAllTime._sum.amountCents ?? 0,
+    },
+    revenue: {
+      thisMonthCents: revenueThis,
+      lastMonthCents: revenueLast,
+      momGrowthPct,
+      byProvider: Object.fromEntries(revenueByProvider.map((p) => [p.provider, p._sum.amountCents ?? 0])),
+      byMonth: revenueByMonth,
+    },
+    tenantGrowthByMonth,
+    usersByMemberType: Object.fromEntries(usersByMemberType.map((g) => [g.memberType, g._count])),
+    topTenants: orgsWithUsers
+      .map((o) => ({ id: o.id, name: o.name, users: o._count.users }))
+      .sort((a, b) => b.users - a.users)
+      .slice(0, 10),
+    months: last6Months,
+  };
+}
