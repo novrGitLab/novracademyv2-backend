@@ -232,13 +232,24 @@ export async function cohortEnroll(params: {
   };
 }
 
+// Cap for the admin "view enrollments" table. A course can accumulate many
+// thousands of rows; the UI shows a bounded, most-recent slice and the count
+// tells it how many are being omitted. (A dedicated export endpoint can page
+// the full set when one is needed.)
+const COURSE_ENROLLMENTS_LIMIT = 500;
+
 export async function listCourseEnrollments(courseId: string) {
-  return prisma.enrollment.findMany({
-    where: { courseId },
-    orderBy: { enrolledAt: "desc" },
-    include: {
-      user: { select: { id: true, name: true, email: true } },
-      payment: { select: { status: true, amountCents: true, currency: true, provider: true } },
-    },
-  });
+  const [total, enrollments] = await Promise.all([
+    prisma.enrollment.count({ where: { courseId } }),
+    prisma.enrollment.findMany({
+      where: { courseId },
+      orderBy: { enrolledAt: "desc" },
+      take: COURSE_ENROLLMENTS_LIMIT,
+      include: {
+        user: { select: { id: true, name: true, email: true } },
+        payment: { select: { status: true, amountCents: true, currency: true, provider: true } },
+      },
+    }),
+  ]);
+  return { enrollments, total };
 }
