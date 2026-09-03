@@ -50,10 +50,21 @@ const app = express();
 const allowedOrigins = (process.env.FRONTEND_URL ?? "http://localhost:3000")
   .split(",")
   .map((o) => o.trim());
+// Local dev servers that hit this backend directly.
+allowedOrigins.push("http://localhost:3000", "http://localhost:3001", "http://localhost:3011", "http://localhost:3012", "http://localhost:3013");
 
+// Allow only the configured frontend origin(s) to call the API with
+// credentials. Disallowed origins simply get no Access-Control-Allow-Origin
+// header — the browser then blocks the request client-side while the API
+// still answers non-browser clients (curl, server-to-server).
 app.use(
   cors({
-    origin: true,
+    origin(origin, callback) {
+      // Non-browser clients send no Origin header — allow them.
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      return callback(null, false);
+    },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "Cookie", "X-Requested-With"],
@@ -123,3 +134,12 @@ const port = Number(process.env.API_PORT ?? 4000);
 httpServer.listen(port, () => {
   console.log(`Novr Academy API listening on http://localhost:${port}`);
 });
+
+// Connection hygiene: keep-alive sockets idle longer than the LB/proxy
+// (Railway/Vercel keep ~60s) would otherwise be killed mid-request; aligning
+// this just above the upstream idle timeout lets the server close them
+// cleanly and avoids ECONNRESET churn. headersTimeout must exceed
+// keepAliveTimeout so a slow client can't hold a socket past the headers
+// window and get an unexpected reset.
+httpServer.keepAliveTimeout = 65_000;
+httpServer.headersTimeout = 70_000;
