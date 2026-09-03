@@ -101,7 +101,10 @@ export async function recalculateEnrollmentProgress(enrollmentId: string, course
   });
 
   if (justCompletedCourse) {
-    await enqueueCertificateGeneration(enrollmentId);
+    // Fire certificate PDF generation + the "certificate issued" email off
+    // the request path — rendering + R2 upload can take seconds and the
+    // learner's heartbeat response shouldn't wait on it.
+    enqueueCertificateGeneration(enrollmentId);
 
     // Award XP + check badges on first course completion.
     try {

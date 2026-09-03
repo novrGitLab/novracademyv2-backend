@@ -1,18 +1,28 @@
 import * as alumniService from "../services/alumniService";
 import * as certificateService from "../services/certificateService";
 
-export async function enqueueCertificateGeneration(enrollmentId: string) {
-  try {
-    await certificateService.issueCertificateForEnrollment(enrollmentId);
-  } catch (err) {
-    console.error("Failed to generate certificate for enrollment", enrollmentId, err);
-  }
+/**
+ * Runs a certificate-generation job off the request path (course completion
+ * fires this from the heartbeat). PDF rendering + R2 upload can take
+ * seconds; deferring keeps the learner's request snappy. Errors are logged,
+ * never thrown to the caller.
+ */
+function deferCertificate(jobName: string, run: () => Promise<unknown>): void {
+  setImmediate(() => {
+    run().catch((err) => {
+      console.error(`[queue:${jobName}] job failed:`, err instanceof Error ? err.message : err);
+    });
+  });
 }
 
-export async function enqueueLegacyCertificateGeneration(alumniRecordId: string) {
-  try {
-    await alumniService.generateLegacyCertificatePdf(alumniRecordId);
-  } catch (err) {
-    console.error("Failed to generate legacy certificate", alumniRecordId, err);
-  }
+export function enqueueCertificateGeneration(enrollmentId: string) {
+  deferCertificate("certificate-generation", () =>
+    certificateService.issueCertificateForEnrollment(enrollmentId)
+  );
+}
+
+export function enqueueLegacyCertificateGeneration(alumniRecordId: string) {
+  deferCertificate("legacy-certificate-generation", () =>
+    alumniService.generateLegacyCertificatePdf(alumniRecordId)
+  );
 }
