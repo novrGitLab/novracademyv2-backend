@@ -145,9 +145,10 @@ export async function recordHeartbeat(params: RecordHeartbeatParams) {
     throw new InvalidLessonTypeError("Heartbeat only applies to video lessons");
   }
 
-  const progressOverview = await getCourseProgress(userId, courseId);
-  const entry = progressOverview.lessons.find((l) => l.lessonId === lessonId);
-  if (!entry?.unlocked) throw new LessonLockedError();
+  // Lean sequential-unlock check (two narrow aggregates) instead of loading
+  // the entire course + all progress rows on every 5s heartbeat.
+  const unlocked = await isLessonUnlockedForUser(enrollment.id, courseId, lesson.order);
+  if (!unlocked) throw new LessonLockedError();
 
   const existing = await prisma.lessonProgress.findUnique({
     where: { enrollmentId_lessonId: { enrollmentId: enrollment.id, lessonId } },
@@ -198,6 +199,31 @@ export async function recordHeartbeat(params: RecordHeartbeatParams) {
 }
 
 /**
+ * Lean unlock check for the 5-second heartbeat path. Unlocking is
+ * sequential: a lesson is unlocked when every lesson ordered before it is
+ * completed. Instead of loading the whole lesson tree + every progress row
+ * (the old getCourseProgress call), this runs two narrow aggregates so the
+ * heartbeat stops re-reading the full course every ~5s.
+ */
+async function isLessonUnlockedForUser(
+  enrollmentId: string,
+  courseId: string,
+  lessonOrder: number
+): Promise<boolean> {
+  // Lessons ordered strictly before this one.
+  const prior = await prisma.lesson.findMany({
+    where: { courseId, order: { lt: lessonOrder } },
+    select: { id: true },
+  });
+  if (prior.length === 0) return true; // first lesson — always unlocked
+
+  const completedPrior = await prisma.lessonProgress.count({
+    where: { enrollmentId, lessonId: { in: prior.map((l) => l.id) }, completed: true },
+  });
+  return completedPrior === prior.length;
+}
+
+/**
  * Marks a PDF lesson as complete once the learner has viewed it (the
  * viewer calls this on reaching the last page). PDFs don't have a
  * heartbeat-style server-verifiable "watch time", so this is a simpler
@@ -214,9 +240,14 @@ export async function markPdfLessonComplete(userId: string, courseId: string, le
     throw new InvalidLessonTypeError("This operation only applies to PDF lessons");
   }
 
-  const progressOverview = await getCourseProgress(userId, courseId);
-  const entry = progressOverview.lessons.find((l) => l.lessonId === lessonId);
-  if (!entry?.unlocked) throw new LessonLockedError();
+  // Lean sequential-unlock check (PDF mark-complete is a cold path relative
+  // to the heartbeat, but it shares the same getCourseProgress cost).
+  const unlocked = await isLessonUnlockedForUser(enrollment.id, courseId, lesson.order);
+  if (!unlocked) throw new LessonLockedError();
+
+  const existing = await prisma.lessonProgress.findUnique({
+    where: { enrollmentId_lessonId: { enrollmentId: enrollment.id, lessonId } },
+  });
 
   const progress = await prisma.lessonProgress.upsert({
     where: { enrollmentId_lessonId: { enrollmentId: enrollment.id, lessonId } },
@@ -228,7 +259,7 @@ export async function markPdfLessonComplete(userId: string, courseId: string, le
       completed: true,
       completedAt: new Date(),
     },
-    update: entry.completed
+    update: existing?.completed
       ? {}
       : {
           watchPct: 100,
@@ -237,7 +268,7 @@ export async function markPdfLessonComplete(userId: string, courseId: string, le
         },
   });
 
-  if (!entry.completed) {
+  if (!existing?.completed) {
     const updatedEnrollment = await recalculateEnrollmentProgress(enrollment.id, courseId);
     return { ...progress, courseProgressPct: updatedEnrollment.progressPct };
   }
@@ -260,9 +291,13 @@ export async function markViewedLessonComplete(userId: string, courseId: string,
     throw new InvalidLessonTypeError("This operation only applies to viewed lessons (slides/PDF)");
   }
 
-  const progressOverview = await getCourseProgress(userId, courseId);
-  const entry = progressOverview.lessons.find((l) => l.lessonId === lessonId);
-  if (!entry?.unlocked) throw new LessonLockedError();
+  // Lean sequential-unlock check.
+  const unlocked = await isLessonUnlockedForUser(enrollment.id, courseId, lesson.order);
+  if (!unlocked) throw new LessonLockedError();
+
+  const existing = await prisma.lessonProgress.findUnique({
+    where: { enrollmentId_lessonId: { enrollmentId: enrollment.id, lessonId } },
+  });
 
   const progress = await prisma.lessonProgress.upsert({
     where: { enrollmentId_lessonId: { enrollmentId: enrollment.id, lessonId } },
@@ -274,7 +309,7 @@ export async function markViewedLessonComplete(userId: string, courseId: string,
       completed: true,
       completedAt: new Date(),
     },
-    update: entry.completed
+    update: existing?.completed
       ? {}
       : {
           watchPct: 100,
@@ -283,7 +318,7 @@ export async function markViewedLessonComplete(userId: string, courseId: string,
         },
   });
 
-  if (!entry.completed) {
+  if (!existing?.completed) {
     const updatedEnrollment = await recalculateEnrollmentProgress(enrollment.id, courseId);
     return { ...progress, courseProgressPct: updatedEnrollment.progressPct };
   }

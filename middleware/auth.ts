@@ -19,6 +19,34 @@ const SESSION_COOKIE_NAMES = [
   "next-auth.session-token",
 ];
 
+// Short-TTL in-memory cache of authenticated users. A single page render
+// fires several backend requests (enrollments, badges, certificates, …),
+// each of which would otherwise re-run the same `prisma.user.findUnique`.
+// The tiny TTL bounds how stale a suspension check can be (≤10s) while
+// removing 3–4 duplicate user lookups per page load.
+const USER_CACHE_TTL_MS = 10_000;
+const userCache = new Map<string, { user: AuthUser; expiresAt: number }>();
+
+function getCachedUser(userId: string): AuthUser | null {
+  const entry = userCache.get(userId);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    userCache.delete(userId);
+    return null;
+  }
+  return entry.user;
+}
+
+function cacheUser(user: AuthUser) {
+  userCache.set(user.id, { user, expiresAt: Date.now() + USER_CACHE_TTL_MS });
+}
+
+/** Drop a user from the auth cache — call after status/role changes so the
+ *  next request re-reads the row immediately (no stale suspension window). */
+export function invalidateUserCache(userId: string) {
+  userCache.delete(userId);
+}
+
 function extractSessionToken(req: Request): string | null {
   const authHeader = req.headers.authorization;
   if (authHeader?.startsWith("Bearer ")) {
@@ -86,6 +114,12 @@ async function resolveUserFromRequest(req: Request): Promise<AuthUser | null> {
       return testUser as AuthUser;
     }
 
+    // Cache hit: avoid a DB query for repeat requests from the same user
+    // within the TTL window (the common case when one page fires many
+    // backend calls in a row).
+    const cached = getCachedUser(payload.sub as string);
+    if (cached) return cached;
+
     const user = await prisma.user.findUnique({
       where: { id: payload.sub as string },
       select: { id: true, email: true, name: true, role: true, memberType: true, status: true, organizationId: true },
@@ -95,6 +129,7 @@ async function resolveUserFromRequest(req: Request): Promise<AuthUser | null> {
       console.log(`Auth: user ${payload.sub} not found or inactive`);
       return null;
     }
+    cacheUser(user as AuthUser);
     return user as AuthUser;
   } catch (err) {
     console.error("Auth: token verification failed:", err instanceof Error ? err.message : err);

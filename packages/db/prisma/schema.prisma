@@ -736,6 +736,9 @@ model GroupMember {
   group CommunityGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
 
   @@unique([userId, groupId])
+  // Group-first lookups (member lists, "who's in this group") can't use the
+  // (userId, groupId) unique — add a standalone groupId index.
+  @@index([groupId])
 }
 
 model CommunityPost {
@@ -823,6 +826,9 @@ model MessageThreadParticipant {
   user   User          @relation(fields: [userId], references: [id])
 
   @@unique([threadId, userId])
+  // "My threads" lookups filter by userId alone — the (threadId, userId)
+  // unique can't serve them, so index userId.
+  @@index([userId])
 }
 
 model Message {
@@ -1003,6 +1009,10 @@ model Payment {
 
   @@index([userId])
   @@index([status])
+  // Every payment webhook looks the payment up by providerRef (Paystack/
+  // Stripe session id). Without an index this was a sequential scan per
+  // webhook; the unique also guards against duplicate webhook activation.
+  @@unique([providerRef])
 }
 
 // =========================================================================

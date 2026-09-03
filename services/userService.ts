@@ -2,6 +2,7 @@ import { prisma } from "@novr/db";
 import { MemberType, UserRole, UserStatus } from "@novr/types";
 import bcrypt from "bcryptjs";
 import { autoJoinGeneral } from "./groupService";
+import { invalidateUserCache } from "../middleware/auth";
 
 const listSelect = {
   id: true,
@@ -114,6 +115,7 @@ export async function bulkUpdateUserStatus(
   }
 
   await prisma.user.updateMany({ where: { id: { in: targetIds } }, data: { status } });
+  targetIds.forEach((id) => invalidateUserCache(id));
   return { updated: targetIds.length };
 }
 
@@ -177,11 +179,13 @@ export interface UpdateUserInput {
 }
 
 export async function updateUser(id: string, input: UpdateUserInput) {
-  return prisma.user.update({
+  const updated = await prisma.user.update({
     where: { id },
     data: input,
     select: listSelect,
   });
+  invalidateUserCache(id);
+  return updated;
 }
 
 /**
@@ -205,4 +209,5 @@ export async function deleteUser(id: string) {
       openToWork: false,
     },
   });
+  invalidateUserCache(id);
 }
