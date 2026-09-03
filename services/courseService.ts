@@ -58,6 +58,25 @@ export async function listCourses(params: ListCoursesParams) {
   return { courses, total, page, pageSize };
 }
 
+/**
+ * Lightweight course "meta" for the lesson player's prev/next navigation and
+ * breadcrumb — title + the ordered lesson index. Avoids fetching the full
+ * course/lesson/quiz tree just to draw a breadcrumb.
+ */
+export async function getCourseNavMeta(id: string) {
+  return prisma.course.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      title: true,
+      lessons: {
+        orderBy: { order: "asc" },
+        select: { id: true, title: true, order: true },
+      },
+    },
+  });
+}
+
 export async function getCourseById(id: string) {
   return prisma.course.findUnique({
     where: { id },

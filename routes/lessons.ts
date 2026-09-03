@@ -111,7 +111,9 @@ router.post("/:lessonId/video/upload-url", requireRole(...ADMIN_ROLES), async (r
 // enrolled + unlocked learner. Mints a short-lived signed Mux playback
 // token; the raw playback ID alone can't stream the signed-policy asset.
 router.get("/:lessonId/video/playback-token", async (req, res) => {
-  const lesson = await lessonService.getLessonById(req.params.lessonId);
+  // Lean authorization check (id/type/order only) — the lesson was already
+  // fully fetched during SSR; we only need to re-verify access here.
+  const lesson = await lessonService.getLessonForAccessCheck(req.params.lessonId);
   if (!lesson || lesson.courseId !== courseIdOf(req)) {
     throw new NotFoundError("Lesson not found");
   }
@@ -119,10 +121,18 @@ router.get("/:lessonId/video/playback-token", async (req, res) => {
     return res.status(400).json({ error: "Lesson has no ready video" });
   }
 
-  // Enforces enrollment + lesson-unlock before handing out a token.
-  const progress = await progressService.getCourseProgress(req.user!.id, courseIdOf(req));
-  const entry = progress.lessons.find((l) => l.lessonId === lesson.id);
-  if (!entry?.unlocked) {
+  // Enforces enrollment + lesson-unlock before handing out a token. Uses the
+  // lean sequential-unlock check rather than a full-course progress scan.
+  const enrollment = await progressService.getActiveEnrollment(req.user!.id, courseIdOf(req));
+  if (!enrollment) {
+    return res.status(403).json({ error: "Enroll in this course first" });
+  }
+  const unlocked = await progressService.isLessonUnlockedForUser(
+    enrollment.id,
+    courseIdOf(req),
+    lesson.order
+  );
+  if (!unlocked) {
     return res.status(403).json({ error: "Complete the previous lesson first" });
   }
 

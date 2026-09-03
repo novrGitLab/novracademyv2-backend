@@ -205,7 +205,7 @@ export async function recordHeartbeat(params: RecordHeartbeatParams) {
  * (the old getCourseProgress call), this runs two narrow aggregates so the
  * heartbeat stops re-reading the full course every ~5s.
  */
-async function isLessonUnlockedForUser(
+export async function isLessonUnlockedForUser(
   enrollmentId: string,
   courseId: string,
   lessonOrder: number
