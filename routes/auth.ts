@@ -68,8 +68,10 @@ router.post("/login", async (req, res) => {
   });
 });
 
+import { sendMail } from "../lib/mailer";
+
 const forgotPasswordSchema = z.object({
-  email: z.string().email(),
+  email: z.string().email().transform((s) => s.trim().toLowerCase()),
 });
 
 router.post("/forgot-password", async (req, res) => {
@@ -80,7 +82,7 @@ router.post("/forgot-password", async (req, res) => {
 
   const user = await prisma.user.findUnique({
     where: { email: parsed.data.email },
-    select: { id: true, email: true },
+    select: { id: true, email: true, name: true },
   });
 
   // Always return success to prevent email enumeration
@@ -91,7 +93,8 @@ router.post("/forgot-password", async (req, res) => {
   const resetToken = crypto.randomBytes(32).toString("hex");
   const resetExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
 
-  // Store reset token in a simple approach - we'll use the verification token table
+  // Delete any existing reset tokens for this user, then store the new one.
+  await prisma.verificationToken.deleteMany({ where: { identifier: `password-reset:${user.id}` } });
   await prisma.verificationToken.create({
     data: {
       identifier: `password-reset:${user.id}`,
@@ -100,11 +103,19 @@ router.post("/forgot-password", async (req, res) => {
     },
   });
 
-  // TODO: Send email with reset link
-  // For now, log it (in production, use Resend email service)
   const baseUrl = (process.env.NEXTAUTH_URL || "http://localhost:3000").replace(/\/+$/, "");
-  console.log(`Password reset token for ${user.email}: ${resetToken}`);
-  console.log(`Reset URL: ${baseUrl}/reset-password?token=${resetToken}`);
+  const resetUrl = `${baseUrl}/reset-password?token=${resetToken}`;
+
+  // Fire-and-forget the email; do not block the API response on it.
+  sendMail({
+    to: user.email,
+    subject: "Reset your Novr Academy password",
+    text: `Hi${user.name ? ` ${user.name}` : ""},\n\nClick the link below to reset your Novr Academy password. This link expires in 1 hour.\n\n${resetUrl}\n\nIf you did not request a password reset, ignore this email.\n`,
+    html: `<p>Hi${user.name ? ` <strong>${user.name}</strong>` : ""},</p><p>Click the button below to reset your Novr Academy password. This link expires in 1 hour.</p><p><a href="${resetUrl}" style="display:inline-block;padding:12px 20px;background:#683290;color:#fff;text-decoration:none;border-radius:8px;">Reset password</a></p><p>Or copy this link:<br/><a href="${resetUrl}">${resetUrl}</a></p><p>If you did not request a password reset, ignore this email.</p>`,
+  }).catch((err) => console.error("[mail] failed to send reset email:", err));
+
+  // Useful during development when SMTP is not configured.
+  console.log(`[password-reset] Sent reset link to ${user.email}: ${resetUrl}`);
 
   res.json({ message: "If an account exists with that email, a reset link has been sent." });
 });
