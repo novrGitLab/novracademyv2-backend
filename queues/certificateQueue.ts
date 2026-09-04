@@ -1,28 +1,16 @@
-import * as alumniService from "../services/alumniService";
-import * as certificateService from "../services/certificateService";
+import { enqueueJob } from "../services/jobQueue";
 
 /**
- * Runs a certificate-generation job off the request path (course completion
- * fires this from the heartbeat). PDF rendering + R2 upload can take
- * seconds; deferring keeps the learner's request snappy. Errors are logged,
- * never thrown to the caller.
+ * Certificate enqueuers — persist a job row to the Postgres-backed queue and
+ * return immediately. The worker loop performs the PDF generation + R2 upload
+ * asynchronously, so course-completion requests aren't blocked by it, and the
+ * job survives restarts (it stays pending until delivered/failed).
  */
-function deferCertificate(jobName: string, run: () => Promise<unknown>): void {
-  setImmediate(() => {
-    run().catch((err) => {
-      console.error(`[queue:${jobName}] job failed:`, err instanceof Error ? err.message : err);
-    });
-  });
-}
 
 export function enqueueCertificateGeneration(enrollmentId: string) {
-  deferCertificate("certificate-generation", () =>
-    certificateService.issueCertificateForEnrollment(enrollmentId)
-  );
+  return enqueueJob("certificate.generate", { id: enrollmentId });
 }
 
 export function enqueueLegacyCertificateGeneration(alumniRecordId: string) {
-  deferCertificate("legacy-certificate-generation", () =>
-    alumniService.generateLegacyCertificatePdf(alumniRecordId)
-  );
+  return enqueueJob("certificate.generate-legacy", { id: alumniRecordId });
 }

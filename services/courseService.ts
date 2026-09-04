@@ -1,5 +1,5 @@
 import { prisma } from "@novr/db";
-import type { CourseStatus } from "@novr/types";
+import { CourseStatus } from "@novr/types";
 
 function slugify(title: string) {
   return title
@@ -169,5 +169,8 @@ export async function updateCourse(id: string, input: UpdateCourseInput) {
 }
 
 export async function deleteCourse(id: string) {
-  await prisma.course.delete({ where: { id } });
+  await prisma.course.update({
+    where: { id },
+    data: { status: CourseStatus.ARCHIVED },
+  });
 }

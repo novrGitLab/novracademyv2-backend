@@ -44,6 +44,7 @@ import storageRouter from "./routes/storage";
 import usersRouter from "./routes/users";
 import webhooksRouter from "./routes/webhooks";
 import { createSocketServer } from "./sockets";
+import { runWorkerLoop } from "./services/jobQueue";
 
 const app = express();
 
@@ -133,6 +134,9 @@ createSocketServer(httpServer);
 const port = Number(process.env.API_PORT ?? 4000);
 httpServer.listen(port, () => {
   console.log(`Novr Academy API listening on http://localhost:${port}`);
+  // Start the job queue worker (Postgres-backed, claims due jobs every 2s).
+  console.log("[queue] starting worker loop...");
+  runWorkerLoop();
 });
 
 // Connection hygiene: keep-alive sockets idle longer than the LB/proxy
