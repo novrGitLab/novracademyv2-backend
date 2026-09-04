@@ -318,10 +318,12 @@ model User {
 
   labSessions LabSession[]
   labSolves   LabSolve[]
+  bootcampsCreated     Bootcamp[]           @relation("BootcampCreator")
+  bootcampInstructorAs Bootcamp[]           @relation("BootcampInstructor")
+  bootcampEnrollments  BootcampEnrollment[]
 
-  itfExportsGenerated ItfExport[] @relation("ItfExportGeneratedBy")
-
-  itfClaimsCreated    ItfClaim[] @relation("ItfClaimCreatedBy")
+  itfExportsGenerated ItfExport[]         @relation("ItfExportGeneratedBy")
+  itfClaimsCreated    ItfClaim[]          @relation("ItfClaimCreatedBy")
   itfClaimsSubmitted  ItfClaim[] @relation("ItfClaimSubmittedBy")
   itfClaimsApproved   ItfClaim[] @relation("ItfClaimApprovedBy")
   itfClaimsRejected   ItfClaim[] @relation("ItfClaimRejectedBy")
@@ -455,6 +457,7 @@ model Course {
   aiConversations  CourseAiConversation[]
   complianceAssignments ComplianceAssignment[]
   enrollmentCodes  EnrollmentCode[]
+  bootcamps        Bootcamp[]
 
   @@index([status])
   @@index([organizationId])
@@ -945,6 +948,52 @@ model EventRsvp {
   event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
   @@unique([userId, eventId])
+}
+
+// =========================================================================
+// Bootcamps (student-created, mirror webinars but multi-day + seats + level)
+// =========================================================================
+
+model Bootcamp {
+  id              String   @id @default(cuid())
+  title           String
+  description     String?
+  instructorName  String?
+  instructorId    String? // optional link to a User profile
+  startAt         DateTime
+  endAt           DateTime
+  scheduleLabel   String? // e.g. "Mon–Fri 10am–2pm WAT" — free text
+  format          String   @default("ONLINE") // ONLINE | HYBRID | IN_PERSON
+  location        String?
+  seatsTotal      Int
+  level           String   @default("Beginner") // Beginner | Intermediate | Advanced
+  topics          String[]
+  courseId        String?
+  status          String   @default("UPCOMING") // UPCOMING | IN_PROGRESS | COMPLETED
+  createdById     String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  createdBy   User                 @relation("BootcampCreator", fields: [createdById], references: [id])
+  instructor  User?                @relation("BootcampInstructor", fields: [instructorId], references: [id])
+  course      Course?              @relation(fields: [courseId], references: [id])
+  enrollments BootcampEnrollment[]
+
+  @@index([status, startAt])
+  @@index([courseId])
+}
+
+model BootcampEnrollment {
+  id         String   @id @default(cuid())
+  bootcampId String
+  userId     String
+  createdAt  DateTime @default(now())
+
+  bootcamp Bootcamp @relation(fields: [bootcampId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id])
+
+  @@unique([bootcampId, userId])
+  @@index([userId])
 }
 
 // =========================================================================
