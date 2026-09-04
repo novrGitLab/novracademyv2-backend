@@ -102,8 +102,9 @@ router.post("/forgot-password", async (req, res) => {
 
   // TODO: Send email with reset link
   // For now, log it (in production, use Resend email service)
+  const baseUrl = (process.env.NEXTAUTH_URL || "http://localhost:3000").replace(/\/+$/, "");
   console.log(`Password reset token for ${user.email}: ${resetToken}`);
-  console.log(`Reset URL: ${process.env.NEXTAUTH_URL || "http://localhost:3000"}/reset-password?token=${resetToken}`);
+  console.log(`Reset URL: ${baseUrl}/reset-password?token=${resetToken}`);
 
   res.json({ message: "If an account exists with that email, a reset link has been sent." });
 });
