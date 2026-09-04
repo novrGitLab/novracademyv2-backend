@@ -13,6 +13,8 @@ router.get("/", async (req, res) => {
   const parsed = z
     .object({
       groupId: z.string().optional(),
+      category: z.string().optional(),
+      search: z.string().optional(),
       page: z.coerce.number().int().positive().optional(),
       pageSize: z.coerce.number().int().positive().optional(),
     })
@@ -26,6 +28,10 @@ router.get("/", async (req, res) => {
 
 const createPostSchema = z.object({
   content: z.string().min(1).max(5000),
+  title: z.string().min(1).max(200).optional(),
+  category: z.string().min(1).max(60).optional(),
+  tags: z.array(z.string().min(1).max(40)).optional(),
+  isPinned: z.boolean().optional(),
   groupId: z.string().optional(),
   cohortId: z.string().optional(),
   visibility: z.nativeEnum(PostVisibility).optional(),
@@ -96,6 +102,21 @@ router.post("/:id/comments", async (req, res) => {
     getIo()?.to(`group:${groupId}`).emit("comment:created", { postId: req.params.id, comment });
   }
   res.status(201).json(comment);
+});
+
+// Pinned toggle (admin only)
+router.patch("/:id/pin", requireRole(...ADMIN_ROLES), async (req, res) => {
+  const post = await postService.togglePin(req.params.id);
+  if (post.groupId) {
+    getIo()?.to(`group:${post.groupId}`).emit("post:pinned", post);
+  }
+  res.json(post);
+});
+
+// View-count bump (fire-and-forget from the client on card expand)
+router.post("/:id/view", async (req, res) => {
+  const post = await postService.bumpViewCount(req.params.id);
+  res.json(post);
 });
 
 router.delete("/:id/comments/:commentId", async (req, res) => {

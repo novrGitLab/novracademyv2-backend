@@ -745,14 +745,20 @@ model CommunityPost {
   id                 String         @id @default(cuid())
   authorId           String
   content            String
+  title              String?
+  category           String?
+  tags               String[]
+  viewCount          Int            @default(0)
+  isPinned           Boolean        @default(false)
+  isCertificateShare Boolean        @default(false)
+  certificateId      String?
   mediaUrls          String[]
   groupId            String?
   cohortId           String?
   visibility         PostVisibility @default(NETWORK)
-  isCertificateShare Boolean        @default(false)
-  certificateId      String?
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
+  lastActivityAt     DateTime?      @default(now())
 
   author      User            @relation(fields: [authorId], references: [id])
   group       CommunityGroup? @relation(fields: [groupId], references: [id])
@@ -765,6 +771,8 @@ model CommunityPost {
 
   @@index([authorId])
   @@index([groupId])
+  @@index([category, createdAt])
+  @@index([isPinned, lastActivityAt])
 }
 
 model PostComment {
