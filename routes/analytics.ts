@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { ADMIN_ROLES } from "@novr/types";
+import { ADMIN_ROLES, UserRole } from "@novr/types";
 import { authenticate, requireRole } from "../middleware/auth";
 import * as analyticsService from "../services/analyticsService";
 import * as assessmentService from "../services/assessmentService";
@@ -10,6 +10,13 @@ router.use(authenticate, requireRole(...ADMIN_ROLES));
 
 router.get("/overview", async (_req, res) => {
   res.json(await analyticsService.getOverviewMetrics());
+});
+
+// Platform-wide analytics for the Super Admin dashboard. Guarded to
+// SUPER_ADMIN only — ORG_ADMIN/INSTITUTION_ADMIN get the org-scoped
+// endpoints instead.
+router.get("/platform", requireRole(UserRole.SUPER_ADMIN), async (_req, res) => {
+  res.json(await analyticsService.getPlatformAnalytics());
 });
 
 router.get("/lms/course-health", async (_req, res) => {

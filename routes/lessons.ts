@@ -111,7 +111,9 @@ router.post("/:lessonId/video/upload-url", requireRole(...ADMIN_ROLES), async (r
 // enrolled + unlocked learner. Mints a short-lived signed Mux playback
 // token; the raw playback ID alone can't stream the signed-policy asset.
 router.get("/:lessonId/video/playback-token", async (req, res) => {
-  const lesson = await lessonService.getLessonById(req.params.lessonId);
+  // Lean authorization check (id/type/order only) — the lesson was already
+  // fully fetched during SSR; we only need to re-verify access here.
+  const lesson = await lessonService.getLessonForAccessCheck(req.params.lessonId);
   if (!lesson || lesson.courseId !== courseIdOf(req)) {
     throw new NotFoundError("Lesson not found");
   }
@@ -119,10 +121,18 @@ router.get("/:lessonId/video/playback-token", async (req, res) => {
     return res.status(400).json({ error: "Lesson has no ready video" });
   }
 
-  // Enforces enrollment + lesson-unlock before handing out a token.
-  const progress = await progressService.getCourseProgress(req.user!.id, courseIdOf(req));
-  const entry = progress.lessons.find((l) => l.lessonId === lesson.id);
-  if (!entry?.unlocked) {
+  // Enforces enrollment + lesson-unlock before handing out a token. Uses the
+  // lean sequential-unlock check rather than a full-course progress scan.
+  const enrollment = await progressService.getActiveEnrollment(req.user!.id, courseIdOf(req));
+  if (!enrollment) {
+    return res.status(403).json({ error: "Enroll in this course first" });
+  }
+  const unlocked = await progressService.isLessonUnlockedForUser(
+    enrollment.id,
+    courseIdOf(req),
+    lesson.order
+  );
+  if (!unlocked) {
     return res.status(403).json({ error: "Complete the previous lesson first" });
   }
 
@@ -174,10 +184,63 @@ router.post("/:lessonId/pdf/upload-url", requireRole(...ADMIN_ROLES), async (req
   res.status(201).json({ uploadUrl: result.uploadUrl });
 });
 
+// POST /courses/:courseId/lessons/:lessonId/slides/upload-url — admin only.
+// Presigned R2 PUT URL for a .pptx the admin wants to use directly as the
+// slide deck (no AI generation). Browser uploads straight to R2.
+router.post("/:lessonId/slides/upload-url", requireRole(...ADMIN_ROLES), async (req, res) => {
+  const lesson = await lessonService.getLessonById(req.params.lessonId);
+  if (!lesson || lesson.courseId !== courseIdOf(req)) {
+    throw new NotFoundError("Lesson not found");
+  }
+  if (lesson.type !== LessonType.SLIDES) {
+    return res.status(400).json({ error: "Only Slides lessons support direct .pptx uploads" });
+  }
+
+  const key = `lessons/${lesson.id}/slides/uploaded-deck.pptx`;
+  const uploadUrl = await r2Service.createGenericUploadUrl(
+    key,
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+  );
+  if (!uploadUrl) {
+    return res.status(503).json({ error: "File storage is not configured" });
+  }
+
+  res.status(201).json({ uploadUrl, key });
+});
+
+// POST /courses/:courseId/lessons/:lessonId/slides/import — admin only.
+// Called after the browser PUT the .pptx to the key from upload-url. Downloads
+// it, parses it into composited slidesData, mirrors media to R2, and attaches
+// the resulting manifest onto this lesson.
+router.post("/:lessonId/slides/import", requireRole(...ADMIN_ROLES), async (req, res) => {
+  const lesson = await lessonService.getLessonById(req.params.lessonId);
+  if (!lesson || lesson.courseId !== courseIdOf(req)) {
+    throw new NotFoundError("Lesson not found");
+  }
+  if (lesson.type !== LessonType.SLIDES) {
+    return res.status(400).json({ error: "Only Slides lessons support .pptx imports" });
+  }
+
+  const { key } = (req.body ?? {}) as { key?: string };
+  if (!key || typeof key !== "string") {
+    return res.status(400).json({ error: "Missing R2 key for the uploaded .pptx" });
+  }
+
+  try {
+    const manifest = await slidesGenerationService.importPptxFromR2(lesson.id, key, {
+      title: lesson.title,
+    });
+    await slidesGenerationService.attachSlidesManifestToLesson(lesson.id, manifest);
+    res.status(200).json({ ok: true, lessonId: lesson.id, slideCount: manifest.slideCount });
+  } catch (err) {
+    console.error("[slides] .pptx import failed:", err);
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to import .pptx" });
+  }
+});
+
 // GET /courses/:courseId/lessons/:lessonId/pdf/view-url — any enrolled +
 // unlocked learner. Short-lived presigned GET URL for in-browser viewing.
-router.get("/:lessonId/pdf/view-url", async (req, res) => {
-  const lesson = await lessonService.getLessonById(req.params.lessonId);
+router.get("/:lessonId/pdf/view-url", async (req, res) => {  const lesson = await lessonService.getLessonById(req.params.lessonId);
   if (!lesson || lesson.courseId !== courseIdOf(req)) {
     throw new NotFoundError("Lesson not found");
   }

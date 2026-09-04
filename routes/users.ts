@@ -17,6 +17,7 @@ const listQuerySchema = z.object({
   memberType: z.nativeEnum(MemberType).optional(),
   status: z.nativeEnum(UserStatus).optional(),
   search: z.string().optional(),
+  organizationId: z.string().optional(),
   page: z.coerce.number().int().positive().optional(),
   pageSize: z.coerce.number().int().positive().optional(),
 });
@@ -29,13 +30,19 @@ router.get("/", requireRole(...ADMIN_ROLES, UserRole.MANAGER), async (req, res) 
     return res.status(400).json({ error: parsed.error.flatten() });
   }
 
-  const orgId = req.user!.role === UserRole.SUPER_ADMIN
-    ? undefined
-    : req.user!.organizationId;
+  // Super admins may scope to any tenant (or all). Everyone else is forced
+  // to their own org.
+  const isSuper = req.user!.role === UserRole.SUPER_ADMIN;
+  const orgId = isSuper ? parsed.data.organizationId ?? null : req.user!.organizationId;
 
   const result = await userService.listUsers({
-    ...parsed.data,
-    organizationId: orgId ?? null,
+    role: parsed.data.role,
+    memberType: parsed.data.memberType,
+    status: parsed.data.status,
+    search: parsed.data.search,
+    page: parsed.data.page,
+    pageSize: parsed.data.pageSize,
+    organizationId: orgId,
   });
   res.json(result);
 });
@@ -109,6 +116,25 @@ router.post("/", requireRole(...ADMIN_ROLES), async (req, res) => {
     }
     throw err;
   }
+});
+
+const bulkStatusSchema = z.object({
+  userIds: z.array(z.string().min(1)).min(1),
+  status: z.nativeEnum(UserStatus),
+});
+
+// POST /users/bulk/status — admins only. Suspend/reactivate many at once.
+// Guards in the service prevent disabling the last super admin or yourself.
+router.post("/bulk/status", requireRole(...ADMIN_ROLES), async (req, res) => {
+  const parsed = bulkStatusSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+  const result = await userService.bulkUpdateUserStatus(parsed.data.userIds, parsed.data.status, {
+    id: req.user!.id,
+    role: req.user!.role,
+  });
+  res.json(result);
 });
 
 const updateUserSchema = z.object({

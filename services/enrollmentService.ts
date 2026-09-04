@@ -8,6 +8,15 @@ export function computeExpiresAt(validityDays: number | null | undefined): Date 
   return new Date(Date.now() + validityDays * 24 * 60 * 60 * 1000);
 }
 
+/** True when the error is the partial-unique violation on (userId, courseId)
+ *  where status = ACTIVE. Callers treat it as "already enrolled". */
+function isActiveEnrollmentConflict(err: unknown): boolean {
+  if (typeof err === "object" && err !== null && "code" in err) {
+    return (err as { code?: string }).code === "P2002";
+  }
+  return false;
+}
+
 async function hasActiveEnrollment(userId: string, courseId: string) {
   const existing = await prisma.enrollment.findFirst({
     where: {
@@ -30,16 +39,33 @@ export async function activateEnrollmentFromPayment(paymentId: string) {
 
   const course = await prisma.course.findUniqueOrThrow({ where: { id: payment.courseId } });
 
-  const enrollment = await prisma.enrollment.create({
-    data: {
-      userId: payment.userId,
-      courseId: payment.courseId,
-      source: EnrollmentSource.SELF_PAID,
-      status: EnrollmentStatus.ACTIVE,
-      expiresAt: computeExpiresAt(course.defaultValidityDays),
-      paymentId: payment.id,
-    },
-  });
+  let enrollment;
+  try {
+    enrollment = await prisma.enrollment.create({
+      data: {
+        userId: payment.userId,
+        courseId: payment.courseId,
+        source: EnrollmentSource.SELF_PAID,
+        status: EnrollmentStatus.ACTIVE,
+        expiresAt: computeExpiresAt(course.defaultValidityDays),
+        paymentId: payment.id,
+      },
+    });
+  } catch (err) {
+    // An ACTIVE enrollment already exists for this user+course (re-purchase,
+    // or a concurrent activation). Return the existing one via the paymentId
+    // lookup that follows idempotency semantics.
+    if (isActiveEnrollmentConflict(err)) {
+      const existing = await prisma.enrollment.findUnique({ where: { paymentId: payment.id } });
+      if (existing) return existing;
+      // Fall through to the active-enrollment row for this user+course.
+      const active = await prisma.enrollment.findFirst({
+        where: { userId: payment.userId, courseId: payment.courseId, status: EnrollmentStatus.ACTIVE },
+      });
+      if (active) return active;
+    }
+    throw err;
+  }
 
   await enqueueEnrollmentConfirmedEmail(enrollment.id);
   enqueueExpiryWarnings(enrollment.id, enrollment.expiresAt);
@@ -56,20 +82,27 @@ export async function selfEnrollFree(userId: string, courseId: string) {
     throw new Error("Already enrolled in this course");
   }
 
-  const enrollment = await prisma.enrollment.create({
-    data: {
-      userId,
-      courseId,
-      source: EnrollmentSource.SELF_PAID,
-      status: EnrollmentStatus.ACTIVE,
-      expiresAt: computeExpiresAt(course.defaultValidityDays),
-    },
-  });
+  try {
+    const enrollment = await prisma.enrollment.create({
+      data: {
+        userId,
+        courseId,
+        source: EnrollmentSource.SELF_PAID,
+        status: EnrollmentStatus.ACTIVE,
+        expiresAt: computeExpiresAt(course.defaultValidityDays),
+      },
+    });
 
-  await enqueueEnrollmentConfirmedEmail(enrollment.id);
-  enqueueExpiryWarnings(enrollment.id, enrollment.expiresAt);
+    await enqueueEnrollmentConfirmedEmail(enrollment.id);
+    enqueueExpiryWarnings(enrollment.id, enrollment.expiresAt);
 
-  return enrollment;
+    return enrollment;
+  } catch (err) {
+    if (isActiveEnrollmentConflict(err)) {
+      throw new Error("Already enrolled in this course");
+    }
+    throw err;
+  }
 }
 
 export interface AssignEnrollmentInput {
@@ -87,17 +120,26 @@ export async function assignEnrollment(input: AssignEnrollmentInput) {
   }
 
   const course = await prisma.course.findUniqueOrThrow({ where: { id: input.courseId } });
-  const enrollment = await prisma.enrollment.create({
-    data: {
-      userId: input.userId,
-      courseId: input.courseId,
-      source: input.source ?? EnrollmentSource.ADMIN_ASSIGNED,
-      status: EnrollmentStatus.ACTIVE,
-      assignedById: input.assignedById,
-      cohortId: input.cohortId,
-      expiresAt: computeExpiresAt(input.validityDays ?? course.defaultValidityDays),
-    },
-  });
+  let enrollment;
+  try {
+    enrollment = await prisma.enrollment.create({
+      data: {
+        userId: input.userId,
+        courseId: input.courseId,
+        source: input.source ?? EnrollmentSource.ADMIN_ASSIGNED,
+        status: EnrollmentStatus.ACTIVE,
+        assignedById: input.assignedById,
+        cohortId: input.cohortId,
+        expiresAt: computeExpiresAt(input.validityDays ?? course.defaultValidityDays),
+      },
+    });
+  } catch (err) {
+    // Concurrent duplicate assign raced past the check above — treat as a skip.
+    if (isActiveEnrollmentConflict(err)) {
+      return { skipped: true as const, userId: input.userId };
+    }
+    throw err;
+  }
 
   // Auto-mark course as mandatory compliance for the assigning admin's org
   const assigner = await prisma.user.findUnique({ where: { id: input.assignedById }, select: { organizationId: true } });
@@ -190,13 +232,24 @@ export async function cohortEnroll(params: {
   };
 }
 
+// Cap for the admin "view enrollments" table. A course can accumulate many
+// thousands of rows; the UI shows a bounded, most-recent slice and the count
+// tells it how many are being omitted. (A dedicated export endpoint can page
+// the full set when one is needed.)
+const COURSE_ENROLLMENTS_LIMIT = 500;
+
 export async function listCourseEnrollments(courseId: string) {
-  return prisma.enrollment.findMany({
-    where: { courseId },
-    orderBy: { enrolledAt: "desc" },
-    include: {
-      user: { select: { id: true, name: true, email: true } },
-      payment: { select: { status: true, amountCents: true, currency: true, provider: true } },
-    },
-  });
+  const [total, enrollments] = await Promise.all([
+    prisma.enrollment.count({ where: { courseId } }),
+    prisma.enrollment.findMany({
+      where: { courseId },
+      orderBy: { enrolledAt: "desc" },
+      take: COURSE_ENROLLMENTS_LIMIT,
+      include: {
+        user: { select: { id: true, name: true, email: true } },
+        payment: { select: { status: true, amountCents: true, currency: true, provider: true } },
+      },
+    }),
+  ]);
+  return { enrollments, total };
 }

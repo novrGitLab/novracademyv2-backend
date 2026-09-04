@@ -69,6 +69,21 @@ export async function getLessonById(id: string) {
   });
 }
 
+/** Lean lesson lookup for authorization-style checks (playback token, etc.)
+ *  that only need identity/type/order — no quiz tree or heavy JSON. */
+export async function getLessonForAccessCheck(id: string) {
+  return prisma.lesson.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      courseId: true,
+      type: true,
+      order: true,
+      muxPlaybackId: true,
+    },
+  });
+}
+
 /** Stores the R2 object key for a PDF lesson (in `contentUrl`, reused as a generic key/URL field per lesson type). */
 export async function setLessonPdfKey(lessonId: string, key: string) {
   return prisma.lesson.update({ where: { id: lessonId }, data: { contentUrl: key } });

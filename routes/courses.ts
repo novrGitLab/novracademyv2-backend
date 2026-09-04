@@ -37,10 +37,16 @@ router.get("/", async (req, res) => {
 });
 
 router.get("/:id", async (req, res) => {
-  const course = await courseService.getCourseById(req.params.id);
+  const isAdmin = ADMIN_ROLES.includes(req.user!.role);
+
+  // Learners get a lean payload (lesson index only, no quiz internals /
+  // slides manifests / content URLs); admins building the course get the
+  // full nested tree.
+  const course = isAdmin
+    ? await courseService.getCourseById(req.params.id)
+    : await courseService.getCourseDetailForLearner(req.params.id, req.user!.id);
   if (!course) return res.status(404).json({ error: "Course not found" });
 
-  const isAdmin = ADMIN_ROLES.includes(req.user!.role);
   if (course.status !== CourseStatus.PUBLISHED && !isAdmin) {
     return res.status(403).json({ error: "Course is not published" });
   }
@@ -56,6 +62,15 @@ router.get("/:id", async (req, res) => {
     enrolled: !!enrollment,
     progressPct: enrollment?.progressPct ?? 0,
   });
+});
+
+// GET /courses/:id/meta — lean course title + ordered lesson index, for the
+// lesson player's breadcrumb and prev/next navigation. Much cheaper than the
+// full detail payload. Learners only (admins use the full editor endpoints).
+router.get("/:id/meta", async (req, res) => {
+  const meta = await courseService.getCourseNavMeta(req.params.id);
+  if (!meta) return res.status(404).json({ error: "Course not found" });
+  res.json(meta);
 });
 
 const createCourseSchema = z.object({

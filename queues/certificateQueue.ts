@@ -1,18 +1,16 @@
-import * as alumniService from "../services/alumniService";
-import * as certificateService from "../services/certificateService";
+import { enqueueJob } from "../services/jobQueue";
 
-export async function enqueueCertificateGeneration(enrollmentId: string) {
-  try {
-    await certificateService.issueCertificateForEnrollment(enrollmentId);
-  } catch (err) {
-    console.error("Failed to generate certificate for enrollment", enrollmentId, err);
-  }
+/**
+ * Certificate enqueuers — persist a job row to the Postgres-backed queue and
+ * return immediately. The worker loop performs the PDF generation + R2 upload
+ * asynchronously, so course-completion requests aren't blocked by it, and the
+ * job survives restarts (it stays pending until delivered/failed).
+ */
+
+export function enqueueCertificateGeneration(enrollmentId: string) {
+  return enqueueJob("certificate.generate", { id: enrollmentId });
 }
 
-export async function enqueueLegacyCertificateGeneration(alumniRecordId: string) {
-  try {
-    await alumniService.generateLegacyCertificatePdf(alumniRecordId);
-  } catch (err) {
-    console.error("Failed to generate legacy certificate", alumniRecordId, err);
-  }
+export function enqueueLegacyCertificateGeneration(alumniRecordId: string) {
+  return enqueueJob("certificate.generate-legacy", { id: alumniRecordId });
 }

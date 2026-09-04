@@ -20,11 +20,14 @@ router.get("/org", async (req, res) => {
   res.json(organization);
 });
 
-// GET /me/enrollments — the current user's enrollments with course + progress
+// GET /me/enrollments — the current user's enrollments with course + progress.
+// Capped to the most recent 200 (a learner realistically has far fewer; the
+// cap keeps the payload bounded for power users).
 router.get("/enrollments", async (req, res) => {
   const enrollments = await prisma.enrollment.findMany({
     where: { userId: req.user!.id },
     orderBy: { createdAt: "desc" },
+    take: 200,
     include: {
       course: { select: { id: true, title: true, slug: true, thumbnailUrl: true } },
     },

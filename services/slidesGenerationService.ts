@@ -282,24 +282,7 @@ async function extractCompositedFallback(
 }
 
 async function downloadPdfFromR2(key: string): Promise<Buffer> {
-  const { S3Client, GetObjectCommand } = await import("@aws-sdk/client-s3");
-  const accountId = process.env.R2_ACCOUNT_ID!;
-  const accessKeyId = process.env.R2_ACCESS_KEY_ID!;
-  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY!;
-  const bucket = process.env.R2_BUCKET_NAME ?? "novracademy-media";
-
-  const client = new S3Client({
-    region: "auto",
-    endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
-    credentials: { accessKeyId, secretAccessKey },
-  });
-
-  const response = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
-  const chunks: Uint8Array[] = [];
-  for await (const chunk of response.Body as AsyncIterable<Uint8Array>) {
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks);
+  return downloadObjectFromR2(key);
 }
 
 /** Rejects PDFs larger than the pdf-to-slides service's 50 MB upload cap. */
@@ -311,6 +294,80 @@ function assertPdfSize(pdfBuffer: Buffer): void {
 }
 
 const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+
+/**
+ * Builds a SlidesManifest from an uploaded .pptx buffer: parses the deck into
+ * composited slidesData (positioned text + images), uploads referenced media
+ * to R2, and returns a manifest ready to persist on a lesson.
+ *
+ * Used for the "upload slides directly" path — no AI generation involved.
+ */
+export async function buildManifestFromPptx(
+  lessonId: string,
+  pptxBuffer: Buffer,
+  opts: { title?: string; sourceLessonId?: string } = {}
+): Promise<SlidesManifest> {
+  const { render, slideImages } = await extractCompositedFallback(pptxBuffer, lessonId);
+
+  const pptxKey = `lessons/${lessonId}/slides/deck.pptx`;
+  await r2Service.uploadBuffer(pptxKey, pptxBuffer, PPTX_MIME);
+
+  return {
+    slideImages,
+    slideCount: render.slides.length,
+    audioUrl: null,
+    voiceoverEnabled: false,
+    pptxUrl: publicR2Url(pptxKey),
+    sourceLessonId: opts.sourceLessonId ?? lessonId,
+    generatedAt: new Date().toISOString(),
+    slidesData: render.slides.map((s) => ({
+      index: s.index - 1,
+      items: (s.items ?? []).map((it) => ({
+        type: it.type,
+        color: it.color,
+        src: it.src,
+        x: it.x,
+        y: it.y,
+        w: it.w,
+        h: it.h,
+        text: it.text,
+        fontSize: it.fontSize,
+        bold: it.bold,
+        align: it.align,
+      })),
+    })),
+    slideW: render.slideW,
+    slideH: render.slideH,
+    mode: render.mode,
+  };
+}
+
+/**
+ * Persists a slides manifest onto a lesson. Used by the direct .pptx upload
+ * path (and available for future regeneration paths).
+ */
+export async function attachSlidesManifestToLesson(lessonId: string, manifest: SlidesManifest) {
+  return prisma.lesson.update({
+    where: { id: lessonId },
+    data: {
+      slidesManifest: {
+        slideImages: manifest.slideImages,
+        slideCount: manifest.slideCount,
+        audioUrl: manifest.audioUrl,
+        voiceoverEnabled: manifest.voiceoverEnabled,
+        pptxUrl: manifest.pptxUrl,
+        sourceLessonId: manifest.sourceLessonId,
+        generatedAt: manifest.generatedAt,
+        slidesData: manifest.slidesData as unknown as Prisma.InputJsonValue,
+        slideW: manifest.slideW,
+        slideH: manifest.slideH,
+        mode: manifest.mode,
+        slideTimings: manifest.slideTimings as unknown as Prisma.InputJsonValue,
+        remoteDeckId: manifest.remoteDeckId,
+      },
+    },
+  });
+}
 
 function mimeForPath(remotePath: string): string {
   const ext = remotePath.split(".").pop()?.toLowerCase() ?? "";
@@ -470,7 +527,11 @@ async function triggerSlidesGeneration(generationId: string) {
         slides: generation.slideCount,
         filename: `${lesson.title.replace(/[^a-zA-Z0-9]+/g, "-") || "document"}.pdf`,
       }),
-    { label: "pdf-to-slides upload", retries: 2 }
+    // No retries on the submit: the async endpoint returns immediately, and
+    // retrying could double-submit and create duplicate decks on the remote.
+    // Transient network failures surface as a failed generation the admin
+    // can retry explicitly.
+    { label: "pdf-to-slides upload", retries: 0 }
   );
 
   await prisma.slidesGeneration.update({ where: { id: generationId }, data: { deckId: deck.deckId } });
@@ -506,8 +567,18 @@ async function triggerSlidesGeneration(generationId: string) {
       console.warn("[slides] composited fallback failed, deck has no slide images:", err instanceof Error ? err.message : err);
     }
   }
-  if (!render || slideImages.length === 0) {
+  // A deck is usable when it has raster slide images OR a valid composited
+  // render spec (positioned text + images). Composited decks legitimately
+  // have zero PNGs — `slideImages` staying empty is not a failure on its own.
+  const hasRaster = slideImages.length > 0;
+  const hasComposited = !!render && render.slides.length > 0;
+  if (!hasRaster && !hasComposited) {
     throw new Error("No slide images could be produced for the generated deck");
+  }
+  // A composited render must be present here (either mirrored from the remote
+  // or produced by the local fallback) — the guard above guarantees it.
+  if (!render) {
+    throw new Error("No render data could be produced for the generated deck");
   }
 
   const manifestData: SlidesManifest = {
@@ -544,7 +615,7 @@ async function triggerSlidesGeneration(generationId: string) {
     remoteDeckId: deck.deckId,
   };
 
-  const generatedLessonIds = await createSlidesLessons(generation, manifestData);
+  const generatedLessonIds = await writeSlidesManifestToLesson(generation, manifestData);
 
   await prisma.slidesGeneration.update({
     where: { id: generationId },
@@ -552,35 +623,25 @@ async function triggerSlidesGeneration(generationId: string) {
   });
 }
 
-async function createSlidesLessons(
+/**
+ * Writes the generated slides manifest onto the lesson that was used for
+ * generation (the SLIDES lesson the admin is editing) instead of creating a
+ * new "— Presentation" lesson. The source lesson keeps its identity; the
+ * manifest is what makes the player render slides.
+ *
+ * Returns the target lesson id (or [] if none found).
+ */
+async function writeSlidesManifestToLesson(
   generation: { id: string; sourceLessonId: string; courseId: string },
   manifest: SlidesManifest
 ): Promise<string[]> {
   const sourceLesson = await prisma.lesson.findUnique({ where: { id: generation.sourceLessonId } });
   if (!sourceLesson) throw new Error("Source lesson not found");
 
-  const existingGenerations = await prisma.slidesGeneration.findMany({
-    where: { sourceLessonId: generation.sourceLessonId, status: "COMPLETED", id: { not: generation.id } },
-  });
-
-  for (const oldGen of existingGenerations) {
-    await prisma.lesson.deleteMany({
-      where: { id: { in: oldGen.generatedLessonIds } },
-    });
-  }
-
-  const maxOrder = await prisma.lesson.aggregate({
-    where: { courseId: generation.courseId },
-    _max: { order: true },
-  });
-  const order = (maxOrder._max.order ?? 0) + 1;
-
-  const lesson = await prisma.lesson.create({
+  // The lesson used for generation is the target — write the manifest onto it.
+  await prisma.lesson.update({
+    where: { id: generation.sourceLessonId },
     data: {
-      courseId: generation.courseId,
-      title: `${sourceLesson.title} — Presentation`,
-      type: LessonType.SLIDES,
-      order,
       slidesManifest: {
         slideImages: manifest.slideImages,
         slideCount: manifest.slideCount,
@@ -599,7 +660,19 @@ async function createSlidesLessons(
     },
   });
 
-  return [lesson.id];
+  // Clean up lessons generated by previous runs of this same source lesson,
+  // so regeneration doesn't leave orphaned "— Presentation" lessons behind.
+  const existingGenerations = await prisma.slidesGeneration.findMany({
+    where: { sourceLessonId: generation.sourceLessonId, status: "COMPLETED", id: { not: generation.id } },
+  });
+  for (const oldGen of existingGenerations) {
+    const staleIds = (oldGen.generatedLessonIds ?? []).filter((id) => id !== generation.sourceLessonId);
+    if (staleIds.length > 0) {
+      await prisma.lesson.deleteMany({ where: { id: { in: staleIds } } });
+    }
+  }
+
+  return [generation.sourceLessonId];
 }
 
 export async function getSlidesGenerationStatus(lessonId: string) {
@@ -624,4 +697,39 @@ export async function getSlidesGenerationStatus(lessonId: string) {
 
 export async function getSlidesGenerationById(generationId: string) {
   return prisma.slidesGeneration.findUnique({ where: { id: generationId } });
+}
+
+/**
+ * Downloads a .pptx from R2 (the browser uploaded it via the presigned URL),
+ * parses it into a slides manifest (composited slidesData + mirrored media),
+ * and returns the manifest — the caller persists it onto the lesson.
+ */
+export async function importPptxFromR2(
+  lessonId: string,
+  key: string,
+  opts: { title?: string; sourceLessonId?: string } = {}
+): Promise<SlidesManifest> {
+  const buffer = await downloadObjectFromR2(key);
+  return buildManifestFromPptx(lessonId, buffer, opts);
+}
+
+async function downloadObjectFromR2(key: string): Promise<Buffer> {
+  const { S3Client, GetObjectCommand } = await import("@aws-sdk/client-s3");
+  const accountId = process.env.R2_ACCOUNT_ID!;
+  const accessKeyId = process.env.R2_ACCESS_KEY_ID!;
+  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY!;
+  const bucket = process.env.R2_BUCKET_NAME ?? "novracademy-media";
+
+  const client = new S3Client({
+    region: "auto",
+    endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
+    credentials: { accessKeyId, secretAccessKey },
+  });
+
+  const response = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of response.Body as AsyncIterable<Uint8Array>) {
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
 }

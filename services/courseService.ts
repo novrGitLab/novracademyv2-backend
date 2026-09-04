@@ -1,5 +1,5 @@
 import { prisma } from "@novr/db";
-import type { CourseStatus } from "@novr/types";
+import { CourseStatus } from "@novr/types";
 
 function slugify(title: string) {
   return title
@@ -58,6 +58,25 @@ export async function listCourses(params: ListCoursesParams) {
   return { courses, total, page, pageSize };
 }
 
+/**
+ * Lightweight course "meta" for the lesson player's prev/next navigation and
+ * breadcrumb — title + the ordered lesson index. Avoids fetching the full
+ * course/lesson/quiz tree just to draw a breadcrumb.
+ */
+export async function getCourseNavMeta(id: string) {
+  return prisma.course.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      title: true,
+      lessons: {
+        orderBy: { order: "asc" },
+        select: { id: true, title: true, order: true },
+      },
+    },
+  });
+}
+
 export async function getCourseById(id: string) {
   return prisma.course.findUnique({
     where: { id },
@@ -67,6 +86,44 @@ export async function getCourseById(id: string) {
         include: { quiz: { include: { questions: { orderBy: { order: "asc" } } } } },
       },
       _count: { select: { enrollments: true, certificates: true } },
+    },
+  });
+}
+
+/**
+ * Lean course detail for learners. The student course page only renders the
+ * lesson index (title/type/order) plus the viewer's payment history, so we
+ * skip the full quiz-question tree and heavy JSON blobs (slidesManifest,
+ * content URLs, Mux fields). Admins use getCourseById (full tree) instead.
+ */
+export async function getCourseDetailForLearner(id: string, userId: string) {
+  return prisma.course.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      title: true,
+      description: true,
+      thumbnailUrl: true,
+      priceCents: true,
+      currency: true,
+      status: true,
+      createdAt: true,
+      lessons: {
+        orderBy: { order: "asc" },
+        select: {
+          id: true,
+          title: true,
+          type: true,
+          order: true,
+          // Lean signal so the UI can show quiz/live/slides affordances.
+          quiz: { select: { id: true, passMarkPct: true } },
+          videoStatus: true,
+        },
+      },
+      payments: {
+        where: { userId },
+        select: { id: true, status: true, amountCents: true, currency: true, provider: true, createdAt: true },
+      },
     },
   });
 }
@@ -112,5 +169,8 @@ export async function updateCourse(id: string, input: UpdateCourseInput) {
 }
 
 export async function deleteCourse(id: string) {
-  await prisma.course.delete({ where: { id } });
+  await prisma.course.update({
+    where: { id },
+    data: { status: CourseStatus.ARCHIVED },
+  });
 }

@@ -1,7 +1,8 @@
 import { prisma } from "@novr/db";
-import type { MemberType, UserRole, UserStatus } from "@novr/types";
+import { MemberType, UserRole, UserStatus } from "@novr/types";
 import bcrypt from "bcryptjs";
 import { autoJoinGeneral } from "./groupService";
+import { invalidateUserCache } from "../middleware/auth";
 
 const listSelect = {
   id: true,
@@ -15,7 +16,16 @@ const listSelect = {
   reputationLevel: true,
   lastLoginAt: true,
   createdAt: true,
+  organization: { select: { id: true, name: true } },
 } as const;
+
+/** List of organizations, for the super-admin tenant filter. */
+export async function listOrganizations() {
+  return prisma.organization.findMany({
+    orderBy: { name: "asc" },
+    select: { id: true, name: true },
+  });
+}
 
 export interface ListUsersParams {
   role?: UserRole;
@@ -71,6 +81,42 @@ export async function lookupUserByEmail(email: string) {
     where: { email },
     select: { id: true, name: true, email: true, avatarUrl: true },
   });
+}
+
+/**
+ * Batch status update for bulk admin actions (suspend/reactivate a selection
+ * of users). Guards: never change the caller's own status, and never suspend
+ * or change the last remaining SUPER_ADMIN.
+ */
+export async function bulkUpdateUserStatus(
+  userIds: string[],
+  status: UserStatus,
+  actor: { id: string; role: UserRole }
+) {
+  const ids = [...new Set(userIds)].filter((id) => id !== actor.id);
+  if (ids.length === 0) return { updated: 0 };
+
+  const targets = await prisma.user.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, role: true, status: true },
+  });
+  const targetIds = targets.map((t) => t.id);
+
+  // Safety: if we'd suspend/demote a SUPER_ADMIN, refuse unless the actor is
+  // also a SUPER_ADMIN and there would still be >= 1 active super admin.
+  const superAdmins = await prisma.user.count({ where: { role: UserRole.SUPER_ADMIN, status: UserStatus.ACTIVE } });
+  const superTargets = targets.filter((t) => t.role === UserRole.SUPER_ADMIN);
+  const wouldDisableLastSuper =
+    actor.role !== UserRole.SUPER_ADMIN ||
+    (superTargets.length > 0 && status !== UserStatus.ACTIVE && superAdmins - superTargets.length < 1);
+
+  if (wouldDisableLastSuper) {
+    throw new Error("Cannot suspend or disable the last active super admin");
+  }
+
+  await prisma.user.updateMany({ where: { id: { in: targetIds } }, data: { status } });
+  targetIds.forEach((id) => invalidateUserCache(id));
+  return { updated: targetIds.length };
 }
 
 export async function getUserById(id: string) {
@@ -133,13 +179,35 @@ export interface UpdateUserInput {
 }
 
 export async function updateUser(id: string, input: UpdateUserInput) {
-  return prisma.user.update({
+  const updated = await prisma.user.update({
     where: { id },
     data: input,
     select: listSelect,
   });
+  invalidateUserCache(id);
+  return updated;
 }
 
+/**
+ * Deletes a user. Because users have many non-cascading relations
+ * (enrollments, certificates, community memberships, …), a hard delete would
+ * 500 on any user who has engaged with the platform. We therefore perform a
+ * soft delete: anonymize the account and suspend it so it can no longer sign
+ * in, while preserving audit/history records that reference the user.
+ */
 export async function deleteUser(id: string) {
-  await prisma.user.delete({ where: { id } });
+  const suffix = `deleted_${Date.now()}`;
+  await prisma.user.update({
+    where: { id },
+    data: {
+      status: UserStatus.SUSPENDED,
+      name: "Deleted user",
+      email: `deleted_${suffix}@invalid.local`,
+      // Release the unique public slug if one was set.
+      publicProfileSlug: id,
+      passwordHash: null,
+      openToWork: false,
+    },
+  });
+  invalidateUserCache(id);
 }

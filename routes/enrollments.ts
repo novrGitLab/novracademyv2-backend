@@ -189,10 +189,12 @@ router.post("/cohort", requireRole(...ADMIN_ROLES), async (req, res) => {
   res.status(201).json(result);
 });
 
-// GET /courses/:courseId/enroll — admin views all enrollments for a course.
+// GET /courses/:courseId/enroll — admin views enrollments for a course.
+// Returns the most recent 500 plus the total count so the UI can indicate
+// when the list is truncated.
 router.get("/", requireRole(...ADMIN_ROLES), async (req, res) => {
-  const enrollments = await enrollmentService.listCourseEnrollments(courseIdOf(req));
-  res.json({ enrollments });
+  const { enrollments, total } = await enrollmentService.listCourseEnrollments(courseIdOf(req));
+  res.json({ enrollments, total });
 });
 
 export default router;

@@ -1,4 +1,6 @@
 import axios from "axios";
+import http from "http";
+import https from "https";
 
 /**
  * Thin client over the deployed pdf-to-slides service. The service owns the
@@ -11,6 +13,10 @@ import axios from "axios";
 const PDF_TO_SLIDES_URL = (process.env.PDF_TO_SLIDES_URL ?? "http://172.237.112.83:3005").replace(/\/+$/, "");
 const PDF_TO_SLIDES_API_KEY = process.env.PDF_TO_SLIDES_API_KEY ?? "";
 const PDF_TO_SLIDES_TIMEOUT_MS = Number(process.env.PDF_TO_SLIDES_TIMEOUT_MS ?? 600_000);
+// Async jobs poll until the deck is done. This caps the total wall time we'll
+// wait before giving up (default 20 min) — comfortably above a voiceover deck.
+const PDF_TO_SLIDES_POLL_INTERVAL_MS = 3000;
+const PDF_TO_SLIDES_MAX_WAIT_MS = Number(process.env.PDF_TO_SLIDES_MAX_WAIT_MS ?? 1_200_000);
 
 export interface SlideTiming {
   index: number;
@@ -82,9 +88,15 @@ function absoluteUrl(path: string): string {
 }
 
 /**
- * Uploads a PDF and blocks until the service has finished the whole pipeline
- * (Presenton generation + optional TTS voiceover + LibreOffice render). The
- * service's request timeout is ~10 min, which comfortably covers it.
+ * Uploads a PDF asynchronously and polls until the deck is ready. The service
+ * returns a deckId immediately (`POST /api/upload-async`); the heavy pipeline
+ * (Presenton + TTS + render) runs server-side in the background. We poll
+ * `GET /api/decks/:id/status` until it reports "completed" or "failed".
+ *
+ * Unlike the old synchronous call, no socket is held open for the whole
+ * pipeline, so a slow deck can no longer be cut off by a request timeout or
+ * double-created by a client-side retry. Throws after `maxWaitMs` if the deck
+ * never finishes.
  */
 export async function generateDeckFromPDF(
   pdfBuffer: Buffer,
@@ -93,24 +105,73 @@ export async function generateDeckFromPDF(
   const form = new FormData();
   form.append("pdf", new Blob([pdfBuffer], { type: "application/pdf" }), opts.filename || "document.pdf");
 
-  const response = await axios.post(`${PDF_TO_SLIDES_URL}/api/upload`, form, {
+  // 1. Submit — returns immediately with a deckId.
+  const submitResponse = await axios.post(`${PDF_TO_SLIDES_URL}/api/upload-async`, form, {
     params: {
       voiceover: opts.voiceover ? "1" : "0",
       slides: String(opts.slides),
     },
     headers: authHeaders(),
-    timeout: PDF_TO_SLIDES_TIMEOUT_MS,
+    timeout: 60_000,
     maxContentLength: Infinity,
     maxBodyLength: Infinity,
+    // The 202 + immediate body must not be treated as an error by axios.
+    validateStatus: (s) => s >= 200 && s < 300,
   });
 
-  const data = response.data as { success?: boolean; deckId?: string; manifest?: DeckManifest };
-  if (!data || data.success !== true || !data.deckId) {
-    throw new Error(`pdf-to-slides upload failed: ${JSON.stringify(response.data).slice(0, 500)}`);
+  const submitData = submitResponse.data as { success?: boolean; deckId?: string; status?: string };
+  if (!submitData || submitData.success !== true || !submitData.deckId) {
+    throw new Error(`pdf-to-slides submit failed: ${JSON.stringify(submitResponse.data).slice(0, 500)}`);
+  }
+  const deckId = submitData.deckId;
+
+  // 2. Poll until the deck is completed (or failed / max wait reached).
+  //    The status endpoint is idempotent and cheap, and the deck keeps being
+  //    processed server-side even if our connection drops (ECONNRESET, keep-
+  //    alive socket closed by a service restart, timeout, transient 5xx).
+  //    We therefore tolerate up to POLL_MAX_CONSECUTIVE_ERRORS failures in a
+  //    row and only give up if the status endpoint is persistently down.
+  const deadline = Date.now() + PDF_TO_SLIDES_MAX_WAIT_MS;
+  const POLL_MAX_CONSECUTIVE_ERRORS = 8;
+  let status = submitData.status ?? "queued";
+  let consecutiveErrors = 0;
+  while (status !== "completed") {
+    if (Date.now() > deadline) {
+      throw new Error(`pdf-to-slides generation timed out after ${Math.round(PDF_TO_SLIDES_MAX_WAIT_MS / 60000)} min (deck ${deckId})`);
+    }
+    await new Promise((r) => setTimeout(r, PDF_TO_SLIDES_POLL_INTERVAL_MS));
+    try {
+      const statusResponse = await axios.get(`${PDF_TO_SLIDES_URL}/api/decks/${encodeURIComponent(deckId)}/status`, {
+        headers: authHeaders(),
+        timeout: 30_000,
+        // Fresh socket per poll: avoids ECONNRESET on a reused keep-alive
+        // connection that the remote closed (e.g. a service restart).
+        httpAgent: new http.Agent({ keepAlive: false }),
+        httpsAgent: new https.Agent({ keepAlive: false }),
+      });
+      const data = statusResponse.data as { status?: string; error?: string | null };
+      status = data.status ?? "processing";
+      consecutiveErrors = 0;
+      if (status === "failed") {
+        throw new Error(`pdf-to-slides generation failed: ${data.error ?? "unknown error"}`);
+      }
+    } catch (err) {
+      // 404 while queued/processing means status.json hasn't been written yet
+      // (harmless race). Connection resets / timeouts / 5xx are transient —
+      // the deck is still processing server-side. Only abort when the status
+      // endpoint fails repeatedly (it would then be genuinely unreachable).
+      if (axios.isAxiosError(err) && err.response?.status === 404) {
+        continue;
+      }
+      consecutiveErrors += 1;
+      if (consecutiveErrors >= POLL_MAX_CONSECUTIVE_ERRORS) {
+        throw err;
+      }
+    }
   }
 
-  const deckId = data.deckId;
-  const manifest = data.manifest ?? { deckId };
+  // 3. Deck is ready — fetch the manifest and render spec.
+  const manifest = await fetchDeckManifest(deckId);
   const render = await getRender(deckId);
 
   return {
@@ -125,6 +186,15 @@ export async function generateDeckFromPDF(
       voiceover: manifest.voiceoverBytes ?? null,
     },
   };
+}
+
+/** Fetches a deck's manifest.json (written when the async pipeline completes). */
+async function fetchDeckManifest(deckId: string): Promise<DeckManifest> {
+  const response = await axios.get(`${PDF_TO_SLIDES_URL}/api/decks/${encodeURIComponent(deckId)}/manifest`, {
+    headers: authHeaders(),
+    timeout: 30_000,
+  });
+  return response.data as DeckManifest;
 }
 
 /**
