@@ -16,6 +16,8 @@ const ALLOWED_SCOPES = new Set([
   "write:community",
   "admin:*",
   "webhook:paystack",
+  "read:soc-feed",
+  "write:soc-feed",
 ]);
 
 /**

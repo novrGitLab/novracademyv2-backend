@@ -5,6 +5,7 @@ import { ADMIN_ROLES, LessonType, QuestionType } from "@novr/types";
 import { NotFoundError } from "../lib/errors";
 import { sanitizeLessonForViewer } from "../lib/quizSanitize";
 import { requireRole } from "../middleware/auth";
+import { writeLimiter, readLimiter } from "../middleware/rateLimit";
 import { enqueueLiveClassReminders } from "../queues/emailQueue";
 import * as dailyService from "../services/dailyService";
 import * as lessonService from "../services/lessonService";
@@ -50,7 +51,7 @@ const createLessonSchema = z.object({
   quizMaxAttempts: z.number().int().positive().optional(),
 });
 
-router.post("/", requireRole(...ADMIN_ROLES), async (req, res) => {
+  router.post("/", writeLimiter, requireRole(...ADMIN_ROLES), async (req, res) => {
   const parsed = createLessonSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.flatten() });
@@ -72,7 +73,7 @@ const updateLessonSchema = z.object({
   pdfAllowDownload: z.boolean().optional(),
 });
 
-router.patch("/:lessonId", requireRole(...ADMIN_ROLES), async (req, res) => {
+  router.patch("/:lessonId", writeLimiter, requireRole(...ADMIN_ROLES), async (req, res) => {
   const parsed = updateLessonSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.flatten() });
@@ -81,7 +82,7 @@ router.patch("/:lessonId", requireRole(...ADMIN_ROLES), async (req, res) => {
   res.json(lesson);
 });
 
-router.delete("/:lessonId", requireRole(...ADMIN_ROLES), async (req, res) => {
+  router.delete("/:lessonId", writeLimiter, requireRole(...ADMIN_ROLES), async (req, res) => {
   await lessonService.deleteLesson(req.params.lessonId);
   res.status(204).send();
 });
@@ -212,7 +213,7 @@ router.post("/:lessonId/slides/upload-url", requireRole(...ADMIN_ROLES), async (
 // Called after the browser PUT the .pptx to the key from upload-url. Downloads
 // it, parses it into composited slidesData, mirrors media to R2, and attaches
 // the resulting manifest onto this lesson.
-router.post("/:lessonId/slides/import", requireRole(...ADMIN_ROLES), async (req, res) => {
+  router.post("/:lessonId/slides/import", writeLimiter, requireRole(...ADMIN_ROLES), async (req, res) => {
   const lesson = await lessonService.getLessonById(req.params.lessonId);
   if (!lesson || lesson.courseId !== courseIdOf(req)) {
     throw new NotFoundError("Lesson not found");

@@ -8,6 +8,7 @@ import * as liveAttendanceService from "../services/liveAttendanceService";
 import * as muxService from "../services/muxService";
 import * as paystackService from "../services/paystackService";
 import * as stripeService from "../services/stripeService";
+import { webhookLimiter } from "../middleware/rateLimit";
 
 const router = Router();
 
@@ -20,7 +21,7 @@ interface MuxAsset {
 
 // Mounted with express.raw() (not express.json()) so the exact bytes Mux
 // signed are available for signature verification.
-router.post("/mux", express.raw({ type: "application/json" }), async (req, res) => {
+router.post("/mux", webhookLimiter, express.raw({ type: "application/json" }), async (req, res) => {
   const signature = req.header("mux-signature");
   const rawBody = req.body as Buffer;
 
@@ -62,7 +63,7 @@ router.post("/mux", express.raw({ type: "application/json" }), async (req, res) 
 
 // Mounted with express.raw() so the exact bytes Stripe signed are
 // available for signature verification.
-router.post("/stripe", express.raw({ type: "application/json" }), async (req, res) => {
+router.post("/stripe", webhookLimiter, express.raw({ type: "application/json" }), async (req, res) => {
   const event = stripeService.constructWebhookEvent(req.body as Buffer, req.header("stripe-signature"));
   if (!event) {
     return res.status(400).json({ error: "Invalid signature" });
@@ -81,7 +82,7 @@ router.post("/stripe", express.raw({ type: "application/json" }), async (req, re
 });
 
 // Paystack sends JSON but signature verification still needs the raw bytes.
-router.post("/paystack", express.raw({ type: "application/json" }), async (req, res) => {
+router.post("/paystack", webhookLimiter, express.raw({ type: "application/json" }), async (req, res) => {
   const rawBody = req.body as Buffer;
   const signature = req.header("x-paystack-signature");
 
@@ -118,7 +119,7 @@ interface DailyEvent {
 
 // Mounted with express.raw() so the exact bytes Daily.co signed are
 // available for signature verification.
-router.post("/daily", express.raw({ type: "application/json" }), async (req, res) => {
+router.post("/daily", webhookLimiter, express.raw({ type: "application/json" }), async (req, res) => {
   const rawBody = req.body as Buffer;
   const isValid = dailyService.verifyWebhookSignature(
     rawBody,
@@ -176,7 +177,7 @@ const EVENT_MAP: Record<string, string> = {
 
 // Mounted under /webhooks before the global express.json(), so this route
 // needs its own JSON parser to read the GoPhish event body.
-router.post("/gophish", express.json(), async (req, res) => {
+router.post("/gophish", webhookLimiter, express.json(), async (req, res) => {
   const { campaign_id, email, message, details } = req.body as GoPhishEvent;
 
   try {
