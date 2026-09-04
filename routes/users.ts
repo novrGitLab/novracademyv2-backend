@@ -3,7 +3,9 @@ import crypto from "crypto";
 import { z } from "zod";
 import { MemberType, UserRole, UserStatus, ADMIN_ROLES } from "@novr/types";
 import { prisma } from "@novr/db";
+import { sendMail } from "../lib/mailer";
 import { authenticate, requireRole } from "../middleware/auth";
+import { readLimiter, bulkLimiter } from "../middleware/rateLimit";
 import * as assessmentService from "../services/assessmentService";
 import * as userService from "../services/userService";
 import { enqueueAdminWelcomeEmail } from "../queues/emailQueue";
@@ -11,13 +13,14 @@ import { enqueueAdminWelcomeEmail } from "../queues/emailQueue";
 const router = Router();
 
 router.use(authenticate);
+router.use(readLimiter);
 
 const listQuerySchema = z.object({
   role: z.nativeEnum(UserRole).optional(),
   memberType: z.nativeEnum(MemberType).optional(),
   status: z.nativeEnum(UserStatus).optional(),
-  search: z.string().optional(),
-  organizationId: z.string().optional(),
+  search: z.string().trim().min(1).max(100).optional(),
+  organizationId: z.string().min(1).max(100).optional(),
   page: z.coerce.number().int().positive().optional(),
   pageSize: z.coerce.number().int().positive().optional(),
 });
@@ -125,7 +128,7 @@ const bulkStatusSchema = z.object({
 
 // POST /users/bulk/status — admins only. Suspend/reactivate many at once.
 // Guards in the service prevent disabling the last super admin or yourself.
-router.post("/bulk/status", requireRole(...ADMIN_ROLES), async (req, res) => {
+router.post("/bulk/status", bulkLimiter, requireRole(...ADMIN_ROLES), async (req, res) => {
   const parsed = bulkStatusSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.flatten() });
@@ -180,11 +183,11 @@ router.delete("/:id", requireRole(...ADMIN_ROLES), async (req, res) => {
 });
 
 const resetPasswordSchema = z.object({
-  password: z.string().min(8),
+  password: z.string().min(8).max(256),
 });
 
 // PATCH /users/:id/password — self or admins can reset password.
-router.patch("/:id/password", async (req, res) => {
+router.patch("/:id/password", readLimiter, async (req, res) => {
   const isSelf = req.user!.id === req.params.id;
   const isAdmin = ADMIN_ROLES.includes(req.user!.role);
   if (!isSelf && !isAdmin) {
@@ -203,6 +206,22 @@ router.patch("/:id/password", async (req, res) => {
     where: { id: req.params.id },
     data: { passwordHash, mustChangePassword: false } as any,
   });
+
+  // Notify the user that their password was changed (fire-and-forget).
+  const user = await prisma.user.findUnique({
+    where: { id: req.params.id },
+    select: { id: true, email: true, name: true },
+  });
+  if (user) {
+    const baseUrl = (process.env.NEXTAUTH_URL || "http://localhost:3000").replace(/\/+$/, "");
+    sendMail({
+      to: user.email,
+      subject: "Your NovrAcademy password was changed",
+      text: `Hi${user.name ? ` ${user.name}` : ""},\n\nYour NovrAcademy password was just changed${isSelf ? "" : " by an administrator"}.\n\nIf this was not you, please contact support immediately.\n`,
+      html: `<p>Hi${user.name ? ` <strong>${user.name}</strong>` : ""},</p><p>Your NovrAcademy password was just changed${isSelf ? "" : " by an administrator"}.</p><p>If this was not you, please contact support immediately.</p>`,
+    }).catch((err) => console.error("[mail] failed to send password-changed notice:", err));
+  }
+
   res.json({ success: true });
 });
 

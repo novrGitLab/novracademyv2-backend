@@ -318,10 +318,13 @@ model User {
 
   labSessions LabSession[]
   labSolves   LabSolve[]
+  bootcampsCreated     Bootcamp[]           @relation("BootcampCreator")
+  bootcampInstructorAs Bootcamp[]           @relation("BootcampInstructor")
+  bootcampEnrollments  BootcampEnrollment[]
 
-  itfExportsGenerated ItfExport[] @relation("ItfExportGeneratedBy")
-
-  itfClaimsCreated    ItfClaim[] @relation("ItfClaimCreatedBy")
+  itfExportsGenerated ItfExport[]         @relation("ItfExportGeneratedBy")
+  oAuthClientsCreated  OAuthClient[]       @relation("OAuthClientCreatedBy")
+  itfClaimsCreated    ItfClaim[]          @relation("ItfClaimCreatedBy")
   itfClaimsSubmitted  ItfClaim[] @relation("ItfClaimSubmittedBy")
   itfClaimsApproved   ItfClaim[] @relation("ItfClaimApprovedBy")
   itfClaimsRejected   ItfClaim[] @relation("ItfClaimRejectedBy")
@@ -455,6 +458,7 @@ model Course {
   aiConversations  CourseAiConversation[]
   complianceAssignments ComplianceAssignment[]
   enrollmentCodes  EnrollmentCode[]
+  bootcamps        Bootcamp[]
 
   @@index([status])
   @@index([organizationId])
@@ -745,14 +749,20 @@ model CommunityPost {
   id                 String         @id @default(cuid())
   authorId           String
   content            String
+  title              String?
+  category           String?
+  tags               String[]
+  viewCount          Int            @default(0)
+  isPinned           Boolean        @default(false)
+  isCertificateShare Boolean        @default(false)
+  certificateId      String?
   mediaUrls          String[]
   groupId            String?
   cohortId           String?
   visibility         PostVisibility @default(NETWORK)
-  isCertificateShare Boolean        @default(false)
-  certificateId      String?
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
+  lastActivityAt     DateTime?      @default(now())
 
   author      User            @relation(fields: [authorId], references: [id])
   group       CommunityGroup? @relation(fields: [groupId], references: [id])
@@ -765,6 +775,8 @@ model CommunityPost {
 
   @@index([authorId])
   @@index([groupId])
+  @@index([category, createdAt])
+  @@index([isPinned, lastActivityAt])
 }
 
 model PostComment {
@@ -937,6 +949,52 @@ model EventRsvp {
   event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
   @@unique([userId, eventId])
+}
+
+// =========================================================================
+// Bootcamps (student-created, mirror webinars but multi-day + seats + level)
+// =========================================================================
+
+model Bootcamp {
+  id              String   @id @default(cuid())
+  title           String
+  description     String?
+  instructorName  String?
+  instructorId    String? // optional link to a User profile
+  startAt         DateTime
+  endAt           DateTime
+  scheduleLabel   String? // e.g. "Mon–Fri 10am–2pm WAT" — free text
+  format          String   @default("ONLINE") // ONLINE | HYBRID | IN_PERSON
+  location        String?
+  seatsTotal      Int
+  level           String   @default("Beginner") // Beginner | Intermediate | Advanced
+  topics          String[]
+  courseId        String?
+  status          String   @default("UPCOMING") // UPCOMING | IN_PROGRESS | COMPLETED
+  createdById     String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  createdBy   User                 @relation("BootcampCreator", fields: [createdById], references: [id])
+  instructor  User?                @relation("BootcampInstructor", fields: [instructorId], references: [id])
+  course      Course?              @relation(fields: [courseId], references: [id])
+  enrollments BootcampEnrollment[]
+
+  @@index([status, startAt])
+  @@index([courseId])
+}
+
+model BootcampEnrollment {
+  id         String   @id @default(cuid())
+  bootcampId String
+  userId     String
+  createdAt  DateTime @default(now())
+
+  bootcamp Bootcamp @relation(fields: [bootcampId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id])
+
+  @@unique([bootcampId, userId])
+  @@index([userId])
 }
 
 // =========================================================================
@@ -1407,6 +1465,25 @@ model ItfClaim {
   @@index([organizationId, trainingYear])
   @@index([status])
   @@index([trainingYear])
+}
+
+// =========================================================================
+// OAuth2 client_credentials (machine-to-machine scoped API tokens)
+// =========================================================================
+
+model OAuthClient {
+  id               String   @id @default(cuid())
+  clientId         String   @unique
+  clientSecretHash String
+  scopes           String[] // e.g. ["read:courses", "write:enrollments"]
+  isActive         Boolean  @default(true)
+  createdById      String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  createdBy User? @relation("OAuthClientCreatedBy", fields: [createdById], references: [id])
+
+  @@index([createdById])
 }
 
 // =========================================================================

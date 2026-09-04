@@ -6,6 +6,8 @@ import { prisma } from "@novr/db";
 import { isDemoMode } from "../lib/demoMode";
 import { NotFoundError } from "../lib/errors";
 import { requireRole } from "../middleware/auth";
+import { requireScope } from "../middleware/oauth";
+import { writeLimiter, readLimiter } from "../middleware/rateLimit";
 import * as enrollmentCodeService from "../services/enrollmentCodeService";
 import * as enrollmentService from "../services/enrollmentService";
 import * as paystackService from "../services/paystackService";
@@ -20,7 +22,7 @@ function courseIdOf(req: Request): string {
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
 // POST /courses/:courseId/enroll/free — self-enroll, free courses only.
-router.post("/free", async (req, res) => {
+router.post("/free", writeLimiter, requireScope("write:enrollments"), async (req, res) => {
   try {
     const enrollment = await enrollmentService.selfEnrollFree(req.user!.id, courseIdOf(req));
     res.status(201).json(enrollment);
@@ -34,9 +36,12 @@ router.post("/free", async (req, res) => {
 // itself is only created once the provider's webhook confirms payment
 // (see routes/webhooks.ts) — never on the redirect back, which the client
 // could forge.
-const checkoutSchema = z.object({ provider: z.nativeEnum(PaymentProvider), enrollmentCodeId: z.string().optional() });
+const checkoutSchema = z.object({
+  provider: z.nativeEnum(PaymentProvider),
+  enrollmentCodeId: z.string().min(1).max(100).optional(),
+});
 
-router.post("/checkout", async (req, res) => {
+router.post("/checkout", writeLimiter, requireScope("write:enrollments"), async (req, res) => {
   const parsed = checkoutSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.flatten() });
@@ -128,11 +133,11 @@ router.post("/checkout", async (req, res) => {
 
 // POST /courses/:courseId/enroll/assign — admin/manager assigns one learner.
 const assignSchema = z.object({
-  email: z.string().email(),
+  email: z.string().trim().toLowerCase().email().max(254),
   validityDays: z.number().int().positive().optional(),
 });
 
-router.post("/assign", requireRole(...MANAGER_ROLES), async (req, res) => {
+router.post("/assign", writeLimiter, requireRole(...MANAGER_ROLES), async (req, res) => {
   const parsed = assignSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.flatten() });
@@ -152,7 +157,7 @@ router.post("/assign", requireRole(...MANAGER_ROLES), async (req, res) => {
 // POST /courses/:courseId/enroll/bulk — admin bulk-assigns by email list
 // (pasted or parsed client-side from an uploaded CSV).
 const bulkSchema = z.object({
-  emails: z.array(z.string().email()).min(1),
+  emails: z.array(z.string().trim().toLowerCase().email().max(254)).min(1).max(100),
   validityDays: z.number().int().positive().optional(),
 });
 
@@ -192,7 +197,7 @@ router.post("/cohort", requireRole(...ADMIN_ROLES), async (req, res) => {
 // GET /courses/:courseId/enroll — admin views enrollments for a course.
 // Returns the most recent 500 plus the total count so the UI can indicate
 // when the list is truncated.
-router.get("/", requireRole(...ADMIN_ROLES), async (req, res) => {
+router.get("/", readLimiter, requireRole(...ADMIN_ROLES), async (req, res) => {
   const { enrollments, total } = await enrollmentService.listCourseEnrollments(courseIdOf(req));
   res.json({ enrollments, total });
 });

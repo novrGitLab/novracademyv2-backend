@@ -32,6 +32,8 @@ async function withViewerState<T extends { id: string }>(posts: T[], viewerId: s
 export interface ListPostsParams {
   viewerId: string;
   groupId?: string;
+  category?: string;
+  search?: string;
   page?: number;
   pageSize?: number;
 }
@@ -45,12 +47,21 @@ export async function listPosts(params: ListPostsParams) {
   const page = Math.max(1, params.page ?? 1);
   const pageSize = Math.min(50, Math.max(1, params.pageSize ?? 20));
 
-  const where = params.groupId ? { groupId: params.groupId } : { visibility: PostVisibility.NETWORK, groupId: null };
+  const where: Record<string, unknown> = params.groupId
+    ? { groupId: params.groupId }
+    : { visibility: PostVisibility.NETWORK, groupId: null };
+  if (params.category) (where as Record<string, unknown>).category = params.category;
+  if (params.search) {
+    (where as Record<string, unknown>).OR = [
+      { title: { contains: params.search, mode: "insensitive" } },
+      { content: { contains: params.search, mode: "insensitive" } },
+    ];
+  }
 
   const [posts, total] = await Promise.all([
     prisma.communityPost.findMany({
       where,
-      orderBy: { createdAt: "desc" },
+      orderBy: [{ isPinned: "desc" }, { lastActivityAt: "desc" }, { createdAt: "desc" }],
       skip: (page - 1) * pageSize,
       take: pageSize,
       include: postInclude,
@@ -61,9 +72,30 @@ export async function listPosts(params: ListPostsParams) {
   return { posts: await withViewerState(posts, params.viewerId), total, page, pageSize };
 }
 
+export async function togglePin(id: string) {
+  const post = await prisma.communityPost.findUniqueOrThrow({ where: { id } });
+  return prisma.communityPost.update({
+    where: { id },
+    data: { isPinned: !post.isPinned },
+    include: postInclude,
+  });
+}
+
+export async function bumpViewCount(id: string) {
+  return prisma.communityPost.update({
+    where: { id },
+    data: { viewCount: { increment: 1 } },
+    include: postInclude,
+  });
+}
+
 export interface CreatePostInput {
   authorId: string;
   content: string;
+  title?: string;
+  category?: string;
+  tags?: string[];
+  isPinned?: boolean;
   groupId?: string;
   cohortId?: string;
   visibility?: PostVisibility;
@@ -77,6 +109,11 @@ export async function createPost(input: CreatePostInput) {
     data: {
       authorId: input.authorId,
       content: input.content,
+      title: input.title,
+      category: input.category,
+      tags: input.tags ?? [],
+      isPinned: input.isPinned ?? false,
+      lastActivityAt: new Date(),
       groupId: input.groupId,
       cohortId: input.cohortId,
       visibility: input.visibility ?? (input.groupId ? PostVisibility.GROUP : PostVisibility.NETWORK),
@@ -138,10 +175,19 @@ export async function listComments(postId: string) {
 }
 
 export async function addComment(postId: string, authorId: string, content: string, parentCommentId?: string) {
-  return prisma.postComment.create({
+  const comment = await prisma.postComment.create({
     data: { postId, authorId, content, parentCommentId },
     include: { author: { select: { id: true, name: true, email: true, avatarUrl: true } } },
   });
+
+  // Bump the post's lastActivityAt so forum sort ("most recent reply") stays
+  // correct — the post rises in the activity-ordered list.
+  await prisma.communityPost.update({
+    where: { id: postId },
+    data: { lastActivityAt: new Date() },
+  });
+
+  return comment;
 }
 
 export async function deleteComment(commentId: string, requesterId: string, isAdmin: boolean) {
