@@ -4,6 +4,8 @@ import { prisma } from "@novr/db";
 import { ADMIN_ROLES, CourseStatus, EnrollmentStatus } from "@novr/types";
 import { sanitizeCourseForViewer } from "../lib/quizSanitize";
 import { authenticate, requireRole } from "../middleware/auth";
+import { requireScope } from "../middleware/oauth";
+import { readLimiter, writeLimiter } from "../middleware/rateLimit";
 import * as aiAssistantService from "../services/aiAssistantService";
 import * as certificateService from "../services/certificateService";
 import * as courseService from "../services/courseService";
@@ -12,6 +14,8 @@ import enrollmentsRouter from "./enrollments";
 import lessonsRouter from "./lessons";
 
 const router = Router();
+
+router.use(readLimiter);
 
 router.use(authenticate);
 
@@ -24,6 +28,18 @@ const listQuerySchema = z.object({
 
 // GET /courses — learners see published only; admins can filter by any status.
 router.get("/", async (req, res) => {
+  // OAuth scoped tokens must carry read:courses; session tokens have no scope
+  // claim and pass as first-party. requireScope is layered on this route
+  // directly so the handler can enforce the OAuth boundary without rejecting
+  // session auth. A helper route like GET / — keep it open for sessions but
+  // scoped for service tokens.
+  const tokenScope = (req as unknown as Record<string, unknown>)._tokenScope;
+  if (tokenScope !== undefined) {
+    const granted = (tokenScope as string).split(" ").filter(Boolean);
+    if (!granted.includes("read:courses") && !granted.includes("admin:*")) {
+      return res.status(403).json({ error: "Insufficient scope", required: ["read:courses"] });
+    }
+  }
   const parsed = listQuerySchema.safeParse(req.query);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.flatten() });

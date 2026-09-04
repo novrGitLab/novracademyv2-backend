@@ -5,12 +5,15 @@ import { SignJWT } from "jose";
 import bcrypt from "bcryptjs";
 import { prisma } from "@novr/db";
 import { UserStatus } from "@novr/types";
+import { authLimiter } from "../middleware/rateLimit";
 
 const router = Router();
 
+router.use(authLimiter);
+
 const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(1),
+  email: z.string().email().transform((s) => s.trim().toLowerCase()),
+  password: z.string().min(1, "Password is required").max(256),
 });
 
 router.post("/login", async (req, res) => {

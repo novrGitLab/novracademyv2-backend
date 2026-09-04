@@ -3,6 +3,7 @@ import "dotenv/config";
 // to the error middleware instead of hanging the request. Must be imported
 // before any routers are defined.
 import "express-async-errors";
+import helmet from "helmet";
 import { createServer } from "http";
 import cookieParser from "cookie-parser";
 import cors from "cors";
@@ -14,6 +15,7 @@ import { ApiError } from "./lib/errors";
 import alumniRouter from "./routes/alumni";
 import assessmentsRouter from "./routes/assessments";
 import authRouter from "./routes/auth";
+import oauthRouter from "./routes/oauth";
 import analyticsRouter from "./routes/analytics";
 import campaignsRouter from "./routes/campaigns";
 import badgesRouter from "./routes/badges";
@@ -48,6 +50,12 @@ import { createSocketServer } from "./sockets";
 import { runWorkerLoop } from "./services/jobQueue";
 
 const app = express();
+
+app.set("trust proxy", 1);
+
+// Standard security headers (HSTS handled by Railway/Vercel in front, but
+// X-Frame-Options, X-Content-Type-Options, etc. come from Helmet).
+app.use(helmet({ contentSecurityPolicy: false }));
 
 const allowedOrigins = (process.env.FRONTEND_URL ?? "http://localhost:3000")
   .split(",")
@@ -87,6 +95,7 @@ app.use("/webhooks", webhooksRouter);
 app.use(express.json({ limit: "10mb" }));
 
 app.use("/auth", authRouter);
+app.use("/oauth", oauthRouter);
 app.use("/users", usersRouter);
 app.use("/courses", coursesRouter);
 app.use("/cohorts", cohortsRouter);

@@ -13,8 +13,8 @@ router.get("/", async (req, res) => {
   const parsed = z
     .object({
       groupId: z.string().optional(),
-      category: z.string().optional(),
-      search: z.string().optional(),
+      category: z.string().min(1).max(60).optional(),
+      search: z.string().trim().min(1).max(100).optional(),
       page: z.coerce.number().int().positive().optional(),
       pageSize: z.coerce.number().int().positive().optional(),
     })

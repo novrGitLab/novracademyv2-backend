@@ -2,8 +2,8 @@ import type { NextFunction, Request, Response } from "express";
 import { decode } from "next-auth/jwt";
 import { jwtVerify } from "jose";
 import { prisma } from "@novr/db";
-import type { AuthUser, UserRole } from "@novr/types";
-import { UserStatus } from "@novr/types";
+import type { AuthUser } from "@novr/types";
+import { UserRole, UserStatus } from "@novr/types";
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -96,7 +96,21 @@ async function resolveUserFromRequest(req: Request): Promise<AuthUser | null> {
       return null;
     }
 
-    // Development test accounts (frontend lib/test-credentials.ts) never
+    // Scoped OAuth tokens (from POST /oauth/token) carry `scope` (space-separated)
+  // and `jti`. `sub` is the OAuth client's clientId (not a User id), so we
+  // short-circuit the User lookup and attach a lightweight machine identity.
+  const scope = typeof payload.scope === "string" ? (payload.scope as string) : undefined;
+
+  if (scope !== undefined) {
+    // OAuth token — no User row to look up. A future revocation list could
+    // check `jti` here without a DB round-trip; v1 leaves tokens valid until
+    // they expire (short TTL: 1 hour).
+    (req as unknown as Record<string, unknown>)._tokenScope = scope;
+    (req as unknown as Record<string, unknown>)._isOAuth = true;
+    return { id: payload.sub as string, email: `${payload.sub}@oauth.local`, name: null, role: UserRole.LEARNER, memberType: "COMMUNITY_ONLY" as never, status: UserStatus.ACTIVE } as unknown as AuthUser;
+  }
+
+  // Development test accounts (frontend lib/test-credentials.ts) never
     // touch the database, so their sub isn't a real User id. Accept them
     // only in development and upsert a real User row so any code storing
     // req.user.id as a foreign key (courses.createdById, etc.) still works.
