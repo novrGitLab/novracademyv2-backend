@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "@novr/db";
 import { ADMIN_ROLES, CourseStatus, EnrollmentStatus } from "@novr/types";
 import { sanitizeCourseForViewer } from "../lib/quizSanitize";
-import { authenticate, requireRole } from "../middleware/auth";
+import { authenticate, optionalAuthenticate, requireRole } from "../middleware/auth";
 import { requireScope } from "../middleware/oauth";
 import { readLimiter, writeLimiter } from "../middleware/rateLimit";
 import * as aiAssistantService from "../services/aiAssistantService";
@@ -17,6 +17,37 @@ const router = Router();
 
 router.use(readLimiter);
 
+// Mount public routes BEFORE authenticate middleware
+// GET /courses/public — public catalog, no auth required, published courses only
+const publicRouter = Router();
+
+publicRouter.get("/", async (req, res) => {
+  const parsed = listQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+  const result = await courseService.listCourses({
+    ...parsed.data,
+    status: CourseStatus.PUBLISHED,
+    page: parsed.data.page ?? 1,
+    pageSize: parsed.data.pageSize ?? 20,
+  });
+  res.json(result);
+});
+
+// GET /courses/public/:id — public course detail, no auth, published only
+publicRouter.get("/:id", async (req, res) => {
+  const course = await courseService.getCourseDetailForLearner(req.params.id, null);
+  if (!course) return res.status(404).json({ error: "Course not found" });
+  if (course.status !== CourseStatus.PUBLISHED) {
+    return res.status(403).json({ error: "Course not available" });
+  }
+  res.json(sanitizeCourseForViewer(course, false));
+});
+
+router.use("/public", publicRouter);
+
+// Authenticated routes below
 router.use(authenticate);
 
 const listQuerySchema = z.object({
@@ -53,14 +84,14 @@ router.get("/", async (req, res) => {
 });
 
 router.get("/:id", async (req, res) => {
-  const isAdmin = ADMIN_ROLES.includes(req.user!.role);
+  const isAdmin = req.user ? ADMIN_ROLES.includes(req.user.role) : false;
 
   // Learners get a lean payload (lesson index only, no quiz internals /
   // slides manifests / content URLs); admins building the course get the
   // full nested tree.
   const course = isAdmin
     ? await courseService.getCourseById(req.params.id)
-    : await courseService.getCourseDetailForLearner(req.params.id, req.user!.id);
+    : await courseService.getCourseDetailForLearner(req.params.id, req.user?.id ?? null);
   if (!course) return res.status(404).json({ error: "Course not found" });
 
   if (course.status !== CourseStatus.PUBLISHED && !isAdmin) {
@@ -69,10 +100,12 @@ router.get("/:id", async (req, res) => {
 
   // Enrollment state for the requesting user — drives the student UI's
   // Enroll-vs-Resume decision without a separate progress round-trip.
-  const enrollment = await prisma.enrollment.findFirst({
-    where: { userId: req.user!.id, courseId: course.id, status: EnrollmentStatus.ACTIVE },
-    select: { progressPct: true },
-  });
+  const enrollment = req.user
+    ? await prisma.enrollment.findFirst({
+        where: { userId: req.user.id, courseId: course.id, status: EnrollmentStatus.ACTIVE },
+        select: { progressPct: true },
+      })
+    : null;
   res.json({
     ...sanitizeCourseForViewer(course, isAdmin),
     enrolled: !!enrollment,
