@@ -128,7 +128,11 @@ router.post("/checkout", writeLimiter, requireScope("write:enrollments"), async 
     return res.status(503).json({ error: "Paystack is not configured" });
   }
   await prisma.payment.update({ where: { id: payment.id }, data: { providerRef: transaction.reference } });
-  res.status(201).json({ checkoutUrl: transaction.authorization_url });
+  res.status(201).json({
+    checkoutUrl: transaction.authorization_url,
+    accessCode: transaction.access_code,
+    publicKey: process.env.PAYSTACK_PUBLIC_KEY,
+  });
 });
 
 // POST /courses/:courseId/enroll/assign — admin/manager assigns one learner.
