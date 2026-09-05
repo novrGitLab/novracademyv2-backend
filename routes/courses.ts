@@ -110,6 +110,7 @@ router.get("/:id", async (req, res) => {
     ...sanitizeCourseForViewer(course, isAdmin),
     enrolled: !!enrollment,
     progressPct: enrollment?.progressPct ?? 0,
+    isAnonymous: !req.user,
   });
 });
 

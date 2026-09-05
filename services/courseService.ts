@@ -95,8 +95,11 @@ export async function getCourseById(id: string) {
  * lesson index (title/type/order) plus the viewer's payment history, so we
  * skip the full quiz-question tree and heavy JSON blobs (slidesManifest,
  * content URLs, Mux fields). Admins use getCourseById (full tree) instead.
+ *
+ * If userId is null, returns a fully public version (no payments, no enrollment
+ * state) suitable for anonymous visitors browsing the catalog.
  */
-export async function getCourseDetailForLearner(id: string, userId: string) {
+export async function getCourseDetailForLearner(id: string, userId: string | null) {
   return prisma.course.findUnique({
     where: { id },
     select: {
@@ -120,10 +123,14 @@ export async function getCourseDetailForLearner(id: string, userId: string) {
           videoStatus: true,
         },
       },
-      payments: {
-        where: { userId },
-        select: { id: true, status: true, amountCents: true, currency: true, provider: true, createdAt: true },
-      },
+      ...(userId
+        ? {
+            payments: {
+              where: { userId },
+              select: { id: true, status: true, amountCents: true, currency: true, provider: true, createdAt: true },
+            },
+          }
+        : {}),
     },
   });
 }
