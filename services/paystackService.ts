@@ -60,6 +60,35 @@ export async function initializeTransaction(
   return json.data;
 }
 
+export interface VerifyTransactionResponse {
+  status: boolean;
+  message: string;
+  data?: {
+    reference: string;
+    status: string;
+    amount: number;
+    currency: string;
+    metadata?: Record<string, unknown>;
+  };
+}
+
+/**
+ * Verifies a transaction by reference against Paystack's API. Used by the
+ * callback-page polling/verify endpoint to activate an enrollment even if the
+ * webhook was delayed or missed — see enrollmentService.activateEnrollmentFromPayment
+ * for idempotency semantics.
+ */
+export async function verifyTransaction(reference: string): Promise<VerifyTransactionResponse | null> {
+  const secretKey = getClient();
+  if (!secretKey) return null;
+  const res = await fetch(`${PAYSTACK_API_URL}/transaction/verify/${encodeURIComponent(reference)}`, {
+    headers: { Authorization: `Bearer ${secretKey}` },
+  });
+  const json = (await res.json()) as VerifyTransactionResponse;
+  if (!res.ok) throw new Error(json.message ?? "Failed to verify Paystack transaction");
+  return json;
+}
+
 /**
  * Verifies a Paystack webhook per their documented scheme: header
  * `x-paystack-signature` is HMAC-SHA512(secretKey, rawBody), hex-encoded.

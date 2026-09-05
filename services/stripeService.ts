@@ -52,6 +52,16 @@ export async function createCheckoutSession(params: CreateCheckoutSessionParams)
   });
 }
 
+export async function retrieveCheckoutSession(sessionId: string) {
+  const client = getClient();
+  if (!client) return null;
+  try {
+    return await client.checkout.sessions.retrieve(sessionId);
+  } catch {
+    return null;
+  }
+}
+
 /** Verifies a Stripe webhook signature and parses the event. Returns null if Stripe isn't configured or the signature is invalid/missing. */
 export function constructWebhookEvent(rawBody: Buffer, signature: string | undefined) {
   const client = getClient();

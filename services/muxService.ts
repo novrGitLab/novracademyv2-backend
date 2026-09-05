@@ -56,19 +56,52 @@ export async function signPlaybackId(
   expiresInSeconds = 3600
 ): Promise<string | null> {
   const keyId = process.env.MUX_SIGNING_KEY_ID;
-  const privateKeyPem = process.env.MUX_SIGNING_KEY_PRIVATE_KEY;
+  let privateKeyPem = process.env.MUX_SIGNING_KEY_PRIVATE_KEY;
   if (!keyId || !privateKeyPem) {
     console.warn("Mux playback signing is not configured (MUX_SIGNING_KEY_ID / MUX_SIGNING_KEY_PRIVATE_KEY missing).");
     return null;
   }
 
-  const privateKey = await importPKCS8(privateKeyPem.replace(/\\n/g, "\n"), "RS256");
+  // Mux dashboard often exports the key as base64-encoded PEM (no header) or
+  // as an escaped PEM string with literal \n. Normalize all variants to a
+  // proper PEM so both PKCS#1 (BEGIN RSA PRIVATE KEY) and PKCS#8 (BEGIN
+  // PRIVATE KEY) work. `jose/importPKCS8` only handles PKCS#8 — for RSA
+  // PKCS#1 we fall back to Node's crypto which accepts either format.
+  privateKeyPem = privateKeyPem.trim();
+  // If it looks like base64 without PEM headers, decode it first.
+  if (!privateKeyPem.includes("BEGIN")) {
+    try {
+      const decoded = Buffer.from(privateKeyPem, "base64").toString("utf8");
+      if (decoded.includes("BEGIN")) privateKeyPem = decoded;
+    } catch {
+      // not base64 — use as-is
+    }
+  }
+  privateKeyPem = privateKeyPem.replace(/\\n/g, "\n");
+
+  let key: Parameters<InstanceType<typeof SignJWT>["sign"]>[0];
+  // Prefer jose for PKCS#8, fall back to Node crypto for PKCS#1/RSA.
+  if (privateKeyPem.includes("BEGIN RSA PRIVATE KEY") || privateKeyPem.includes("BEGIN PRIVATE KEY") === false) {
+    try {
+      key = crypto.createPrivateKey(privateKeyPem) as unknown as Parameters<InstanceType<typeof SignJWT>["sign"]>[0];
+    } catch {
+      // Last resort: try jose anyway to surface a clear error
+      key = await importPKCS8(privateKeyPem, "RS256");
+    }
+  } else {
+    try {
+      key = await importPKCS8(privateKeyPem, "RS256");
+    } catch {
+      // RSA PKCS#1 wrapped as PKCS#8 header mismatch — try Node crypto
+      key = crypto.createPrivateKey(privateKeyPem) as unknown as Parameters<InstanceType<typeof SignJWT>["sign"]>[0];
+    }
+  }
 
   return new SignJWT({ sub: playbackId, aud: audience, kid: keyId })
     .setProtectedHeader({ alg: "RS256", kid: keyId })
     .setIssuedAt()
     .setExpirationTime(Math.floor(Date.now() / 1000) + expiresInSeconds)
-    .sign(privateKey);
+    .sign(key as unknown as Parameters<InstanceType<typeof SignJWT>["sign"]>[0]);
 }
 
 const WEBHOOK_TOLERANCE_SECONDS = 5 * 60;

@@ -198,6 +198,79 @@ router.post("/cohort", requireRole(...ADMIN_ROLES), async (req, res) => {
   res.status(201).json(result);
 });
 
+// POST /courses/:courseId/enroll/verify — client polling after the Paystack/Stripe
+// callback redirect. If the provider's webhook hasn't landed yet, verify the
+// pending payment synchronously and activate the enrollment. Idempotent and
+// safe to call repeatedly from the success page.
+//
+// Also serves as the "is it unlocked yet?" check: returns { enrolled: true }
+// once an ACTIVE enrollment exists, so the UI can stop polling and refresh.
+//
+// This does NOT trust the ?checkout=success query param alone — it verifies
+// against the provider (Paystack verify/ Stripe session retrieve) or the
+// SUCCEEDED payment row created by the webhook.
+router.post("/verify", writeLimiter, requireScope("write:enrollments"), async (req, res) => {
+  const courseId = courseIdOf(req);
+  const userId = req.user!.id;
+
+  // Already enrolled? Short-circuit without hitting Paystack/Stripe.
+  const active = await prisma.enrollment.findFirst({
+    where: { userId, courseId, status: "ACTIVE" },
+  });
+  if (active) return res.json({ enrolled: true, via: "enrollment" as const });
+
+  // Find the latest pending payment for this course+user.
+  const pending = await prisma.payment.findFirst({
+    where: { userId, courseId, status: PaymentStatus.PENDING },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!pending) return res.json({ enrolled: false, reason: "no_pending_payment" as const });
+
+  // Provider-specific verification: Paystack verify by reference, Stripe by session.
+  if (pending.provider === PaymentProvider.PAYSTACK && pending.providerRef) {
+    try {
+      const verification = await paystackService.verifyTransaction(pending.providerRef);
+      if (verification?.data?.status === "success") {
+        await prisma.payment.update({ where: { id: pending.id }, data: { status: PaymentStatus.SUCCEEDED } });
+        await enrollmentService.activateEnrollmentFromPayment(pending.id);
+        return res.json({ enrolled: true, via: "paystack_verify" as const });
+      }
+      // Paystack reports abandoned/failed — surface that so the UI can show cancelled/failed.
+      if (verification?.data?.status && verification.data.status !== "success") {
+        return res.json({ enrolled: false, reason: verification.data.status as string });
+      }
+    } catch {
+      // Verification transiently failed — fall through to polling fallback below.
+    }
+  }
+
+  if (pending.provider === PaymentProvider.STRIPE && pending.providerRef) {
+    try {
+      const session = await stripeService.retrieveCheckoutSession(pending.providerRef);
+      if (session?.payment_status === "paid") {
+        await prisma.payment.update({ where: { id: pending.id }, data: { status: PaymentStatus.SUCCEEDED } });
+        await enrollmentService.activateEnrollmentFromPayment(pending.id);
+        return res.json({ enrolled: true, via: "stripe_verify" as const });
+      }
+    } catch {
+      // fall through
+    }
+  }
+
+  // Webhook may still be in-flight — check again if it landed while we verified.
+  const again = await prisma.enrollment.findFirst({ where: { userId, courseId, status: "ACTIVE" } });
+  if (again) return res.json({ enrolled: true, via: "enrollment" as const });
+
+  // Also check if the pending payment was just marked SUCCEEDED by a concurrent webhook.
+  const refreshed = await prisma.payment.findUnique({ where: { id: pending.id } });
+  if (refreshed?.status === PaymentStatus.SUCCEEDED) {
+    await enrollmentService.activateEnrollmentFromPayment(pending.id);
+    return res.json({ enrolled: true, via: "payment_succeeded" as const });
+  }
+
+  return res.json({ enrolled: false, reason: "pending" as const });
+});
+
 // GET /courses/:courseId/enroll — admin views enrollments for a course.
 // Returns the most recent 500 plus the total count so the UI can indicate
 // when the list is truncated.
